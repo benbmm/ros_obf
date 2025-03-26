@@ -810,45 +810,33 @@ int main(int argc, char **argv) {
   return 0;
 }
 
+const char *base_path = "/home/user/ros2_obf_ws/src/cpg";
+const char *folder_name = "knee_high";  // <-- 修改這裡即可切換資料夾
+char full_path_buf[256];  // 共用緩衝區
+
+#define MAKE_PATH(filename) (snprintf(full_path_buf, sizeof(full_path_buf), "%s/%s/%s", base_path, folder_name, filename), full_path_buf)
+
 void load_cpg(void) {
-  FILE *YYout11 =
-      fopen("/home/user/ros2_obf_ws/src/cpg/fixed_cpg/YYout11.txt", "r");
-  FILE *YYout21 =
-      fopen("/home/user/ros2_obf_ws/src/cpg/fixed_cpg/YYout21.txt", "r");
-  FILE *YYout31 =
-      fopen("/home/user/ros2_obf_ws/src/cpg/fixed_cpg/YYout31.txt", "r");
-  FILE *YYout41 =
-      fopen("/home/user/ros2_obf_ws/src/cpg/fixed_cpg/YYout41.txt", "r");
-  FILE *YYout51 =
-      fopen("/home/user/ros2_obf_ws/src/cpg/fixed_cpg/YYout51.txt", "r");
-  FILE *YYout61 =
-      fopen("/home/user/ros2_obf_ws/src/cpg/fixed_cpg/YYout61.txt", "r");
+  FILE *YYout11 = fopen(MAKE_PATH("YYout11.txt"), "r");
+  FILE *YYout21 = fopen(MAKE_PATH("YYout21.txt"), "r");
+  FILE *YYout31 = fopen(MAKE_PATH("YYout31.txt"), "r");
+  FILE *YYout41 = fopen(MAKE_PATH("YYout41.txt"), "r");
+  FILE *YYout51 = fopen(MAKE_PATH("YYout51.txt"), "r");
+  FILE *YYout61 = fopen(MAKE_PATH("YYout61.txt"), "r");
 
-  FILE *YYout12 =
-      fopen("/home/user/ros2_obf_ws/src/cpg/fixed_cpg/YYout12.txt", "r");
-  FILE *YYout22 =
-      fopen("/home/user/ros2_obf_ws/src/cpg/fixed_cpg/YYout22.txt", "r");
-  FILE *YYout32 =
-      fopen("/home/user/ros2_obf_ws/src/cpg/fixed_cpg/YYout32.txt", "r");
-  FILE *YYout42 =
-      fopen("/home/user/ros2_obf_ws/src/cpg/fixed_cpg/YYout42.txt", "r");
-  FILE *YYout52 =
-      fopen("/home/user/ros2_obf_ws/src/cpg/fixed_cpg/YYout52.txt", "r");
-  FILE *YYout62 =
-      fopen("/home/user/ros2_obf_ws/src/cpg/fixed_cpg/YYout62.txt", "r");
+  FILE *YYout12 = fopen(MAKE_PATH("YYout12.txt"), "r");
+  FILE *YYout22 = fopen(MAKE_PATH("YYout22.txt"), "r");
+  FILE *YYout32 = fopen(MAKE_PATH("YYout32.txt"), "r");
+  FILE *YYout42 = fopen(MAKE_PATH("YYout42.txt"), "r");
+  FILE *YYout52 = fopen(MAKE_PATH("YYout52.txt"), "r");
+  FILE *YYout62 = fopen(MAKE_PATH("YYout62.txt"), "r");
 
-  FILE *YYout13 =
-      fopen("/home/user/ros2_obf_ws/src/cpg/fixed_cpg/YYout13.txt", "r");
-  FILE *YYout23 =
-      fopen("/home/user/ros2_obf_ws/src/cpg/fixed_cpg/YYout23.txt", "r");
-  FILE *YYout33 =
-      fopen("/home/user/ros2_obf_ws/src/cpg/fixed_cpg/YYout33.txt", "r");
-  FILE *YYout43 =
-      fopen("/home/user/ros2_obf_ws/src/cpg/fixed_cpg/YYout43.txt", "r");
-  FILE *YYout53 =
-      fopen("/home/user/ros2_obf_ws/src/cpg/fixed_cpg/YYout53.txt", "r");
-  FILE *YYout63 =
-      fopen("/home/user/ros2_obf_ws/src/cpg/fixed_cpg/YYout63.txt", "r");
+  FILE *YYout13 = fopen(MAKE_PATH("YYout13.txt"), "r");
+  FILE *YYout23 = fopen(MAKE_PATH("YYout23.txt"), "r");
+  FILE *YYout33 = fopen(MAKE_PATH("YYout33.txt"), "r");
+  FILE *YYout43 = fopen(MAKE_PATH("YYout43.txt"), "r");
+  FILE *YYout53 = fopen(MAKE_PATH("YYout53.txt"), "r");
+  FILE *YYout63 = fopen(MAKE_PATH("YYout63.txt"), "r");
 
   for (int count = 1; count <= _Maxstep; ++count) {
     fscanf(YYout11, "%lf\n", &(leg[1].osc[1].Y[count]));
@@ -876,26 +864,14 @@ void load_cpg(void) {
     fscanf(YYout63, "%lf\n", &(leg[6].osc[3].Y[count]));
   }
 
-  fclose(YYout11);
-  fclose(YYout21);
-  fclose(YYout31);
-  fclose(YYout41);
-  fclose(YYout51);
-  fclose(YYout61);
+  fclose(YYout11); fclose(YYout21); fclose(YYout31);
+  fclose(YYout41); fclose(YYout51); fclose(YYout61);
 
-  fclose(YYout12);
-  fclose(YYout22);
-  fclose(YYout32);
-  fclose(YYout42);
-  fclose(YYout52);
-  fclose(YYout62);
+  fclose(YYout12); fclose(YYout22); fclose(YYout32);
+  fclose(YYout42); fclose(YYout52); fclose(YYout62);
 
-  fclose(YYout13);
-  fclose(YYout23);
-  fclose(YYout33);
-  fclose(YYout43);
-  fclose(YYout53);
-  fclose(YYout63);
+  fclose(YYout13); fclose(YYout23); fclose(YYout33);
+  fclose(YYout43); fclose(YYout53); fclose(YYout63);
 
   turn(_Maxstep);
 }
