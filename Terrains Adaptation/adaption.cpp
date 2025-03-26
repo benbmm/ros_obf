@@ -106,7 +106,7 @@ class adaption_node : public rclcpp::Node {
     roll=-roll;
     //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Roll: %f, Pitch: %f, Yaw: %f",roll, pitch, yaw);
     
-    if (fabs(pitch) < thres) {
+    /* if (fabs(pitch) < thres) {
       //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "pitch: %f, Roll<%f",pitch, thres);
       pitch = 0;
       
@@ -115,7 +115,7 @@ class adaption_node : public rclcpp::Node {
       //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Roll: %f, Roll<%f",roll, thres);
       roll = 0;
       
-    }
+    } */
     
   }
   void Service_callback(
@@ -146,17 +146,20 @@ class adaption_node : public rclcpp::Node {
     // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "adapting{%d}", step);
     //RCLCPP_INFO(rclcpp::get_logger("rclcpp"),"h1: %f\th2: %f\th3: %f\th4: %f\th5: %f\th6: %f\nchange:%d\n", h[1], h[2],h[3], h[4], h[5], h[6],change);
     double ctrl_val;
+    int clad;
     if (leg[1].osc[2].Y[step]>=0 || leg[6].osc[2].Y[step]<=0){
       if(leg[1].osc[2].Y[step]==0){
         ctrl_val=abs(h[1]);
+        clad=leg[1].clad;
       }else{
         ctrl_val=abs(h[6]);
+        clad=leg[6].clad;
       }
     }else{
       ctrl_val=999;
     }
       
-	RCLCPP_INFO(rclcpp::get_logger("rclcpp"),"pitch:%f\troll:%f\tchange:%d\nctrl_val:%f\n", pitch,roll,change,ctrl_val);
+	RCLCPP_INFO(rclcpp::get_logger("rclcpp"),"pitch:%f\troll:%f\tchange:%d\nctrl_val:%f\tclad:%d\n", pitch,roll,change,ctrl_val,clad);
   }
   void reduce_by_min_if_nonzero(int set){
     if(set==1){
@@ -244,12 +247,12 @@ class adaption_node : public rclcpp::Node {
     
   }
   void deep(int num_count) {
-    e[1] = (pitch + roll) * 0.707;
+    e[1] = (pitch + roll) * sqrt(0.5);
     e[2] = roll;
-    e[3] = (-pitch + roll) * 0.707;
-    e[4] = (-pitch - roll) * 0.707;
+    e[3] = (-pitch + roll) * sqrt(0.5);
+    e[4] = (-pitch - roll) * sqrt(0.5);
     e[5] = -roll;
-    e[6] = (pitch - roll) * 0.707;
+    e[6] = (pitch - roll) * sqrt(0.5);
 
     for (int i = 1; i < 7; i++) {
       leg[i].deep[num_count] = e[i];
@@ -705,7 +708,11 @@ class adaption_node : public rclcpp::Node {
               if ((leg[j].height[num_count]) > ladder[3]) {
                 h[j] = ladder[3];
                 leg[j].ttemp = ladder[3];
-                leg[j].clad = 3;
+                if (limit_knee_output){
+                  leg[j].clad = 2;
+                }else{
+                  leg[j].clad = 3;
+                }
                 change=1;
                 printf("2realout[%d]=%lf\t", j, ladder[3]);
               } else {
