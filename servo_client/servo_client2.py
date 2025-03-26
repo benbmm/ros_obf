@@ -85,8 +85,8 @@ def walk(x, a, b):
         a=0.5
         b=-0.5
     print(f"c={c}\td={d}\n")
-    a=1
-    b=1
+    #a=0
+    #b=0
     #print(f"e={e}\n")
     servos["R00"].angle=(cpg_deg_change(leg[1].osc[1].Y[x] * a))
     servos["R01"].angle=(cpg_deg_change(leg[1].osc[2].Y[x] * c)+e)
@@ -109,8 +109,10 @@ def walk(x, a, b):
 
 def load_cpg():
     print("load cpg")
+    #fixed_cpg
+    #knee_high
     file_paths = [
-        f"/home/user/ros2_obf_ws/src/cpg/fixed_cpg/YYout{i}{j}.txt" for i in range(1, 7) for j in range(1, 4)
+        f"/home/user/ros2_obf_ws/src/cpg/knee_high_2/YYout{i}{j}.txt" for i in range(1, 7) for j in range(1, 4)
     ]
     files = [open(path, "r") for path in file_paths]
 
