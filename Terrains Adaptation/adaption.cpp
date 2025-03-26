@@ -19,6 +19,7 @@ void load_cpg(void);
 void turn(int);
 void cal_out_3_walk(int);
 
+#define limit_knee_output 1
 
 #define _Maxstep 40000
 #define _count 1000
@@ -455,7 +456,11 @@ class adaption_node : public rclcpp::Node {
               if (fabs(leg[j].height[num_count]) > ladder[3]) {
                 h[j] = -ladder[3];
                 leg[j].ttemp = -ladder[3];
-                leg[j].clad = 3;
+                if (limit_knee_output){
+                  leg[j].clad = 2;
+                }else{
+                  leg[j].clad = 3;
+                }
                 change=1;
                 printf("2realout[%d]=%lf\t", j, -ladder[3]);
                 //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "ffffffffffffffffffffffffffffffffff");
