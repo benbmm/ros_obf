@@ -247,7 +247,7 @@ class adaption_node : public rclcpp::Node {
       h[4] = std::clamp(h[4], -0.6, 0.6);
       h[6] = std::clamp(h[6], -0.6, 0.6);
     }
-    
+     
   }
   void deep(int num_count) {
     e[1] = (pitch + roll) * sqrt(0.5);
