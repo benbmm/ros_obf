@@ -33,7 +33,10 @@ int kk = 0, kkk[7] = {0}, aaa[7] = {0}, judge[7] = {0, 2, 2, 2, 2, 2, 2},
     cc[7] = {0};
 double pi[7] = {0}, ro[7] = {0},
        ladder[7] = {0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6};
-double thres = 0.05;
+
+double thres = 0.03;
+int isBalanced =1;
+
 double roll, pitch, yaw;
 double e[7];  // 存roll, pitch在六個方向的分量
 double temp = 0, number[7] = {0};
@@ -254,8 +257,13 @@ class adaption_node : public rclcpp::Node {
     e[5] = -roll;
     e[6] = (pitch - roll) * sqrt(0.5);
 
+    isBalanced=1;
+
     for (int i = 1; i < 7; i++) {
       leg[i].deep[num_count] = e[i];
+      if (e[i]>thres){
+        isBalanced=0;
+      }
       // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
       // "leg[%d].deep[%d]=%f\n",i,num_count,e[i]);
     }
@@ -423,7 +431,7 @@ class adaption_node : public rclcpp::Node {
             //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "leg[%d].out[%d]=%f",j,num_count,leg[j].out[num_count]);
 
             // if(pitch==0 && roll==0){
-            if (fabs(pitch) <= thres && fabs(roll) <= thres) {
+            if (isBalanced) {
               leg[j].out[num_count - 1] = leg[j].ttemp;
               leg[j].out[num_count] = leg[j].out[num_count - 1];
 
@@ -537,8 +545,7 @@ class adaption_node : public rclcpp::Node {
           pi[j] = pitch;
           ro[j] = roll;
           //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "pitch=%f,roll=%f,373",pitch, roll);
-          if (fabs(pi[j]) < thres &&
-              fabs(ro[j]) < thres) {  // no need to adjust
+          if (isBalanced) {  // no need to adjust
             //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "no++");
             leg[j].no++;
           }
@@ -673,7 +680,7 @@ class adaption_node : public rclcpp::Node {
             }
             //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "leg[%d].out[%d]=%f",j,num_count,leg[j].out[num_count]);
             // if(pitch==0 && roll==0){
-            if (fabs(pitch) <= thres && fabs(roll) <= thres) {
+            if (isBalanced) {
               leg[j].out[num_count - 1] = leg[j].ttemp;
               leg[j].out[num_count] = leg[j].out[num_count - 1];
             } else if (leg[j].out[num_count] >= 0.6) {
@@ -786,8 +793,7 @@ class adaption_node : public rclcpp::Node {
           ro[j] = roll;
           //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "pitch=%f,roll=%f,602",pitch, roll);
 
-          if (fabs(pi[j]) < thres &&
-              fabs(ro[j]) < thres) {  // no need to adjust
+          if (isBalanced) {  // no need to adjust
             leg[j].no++;
           }
           // printf("judge[0]=%d\n",judge[0]);
