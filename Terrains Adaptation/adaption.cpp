@@ -130,14 +130,14 @@ class adaption_node : public rclcpp::Node {
     initialization();
     deep(step);
     cal_out_3_walk(step);
-    
+    /* 
     if (reduce_by_min_135){
       reduce_by_min_if_nonzero(1);
     }
     if(reduce_by_min_246){
       reduce_by_min_if_nonzero(2);
     }
-   
+    */
     response->h1 = h[1];
     response->h2 = h[2];
     response->h3 = h[3];
@@ -261,8 +261,10 @@ class adaption_node : public rclcpp::Node {
     isBalanced=1;
 
     for (int i = 1; i < 7; i++) {
-      leg[i].deep[num_count] = e[i];
-      if (e[i]>thres){
+      if (e[i]<thres){
+        leg[i].deep[num_count]=0;
+      }else{
+        leg[i].deep[num_count] = e[i];
         isBalanced=0;
       }
       // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
@@ -426,6 +428,7 @@ class adaption_node : public rclcpp::Node {
                   leg[j].deep[num_count] * leg[j].lpara +
                   (leg[j].deep[num_count] - leg[j].deep[num_count - 1]) *
                       leg[j].lpara2;
+                      RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "leg[%d].out[%d]=%f",j,num_count,leg[j].out[num_count]);
             } else {
               leg[j].out[num_count] = leg[j].out[num_count - 1];
             }
@@ -677,6 +680,7 @@ class adaption_node : public rclcpp::Node {
                   (leg[j].deep[num_count] - leg[j].deep[num_count - 1]) *
                       leg[j].lpara2;
               // printf("\ncccccccccccccccccc\nleg[j].out[num_count]=%f\n",leg[j].out[num_count]);
+              RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "leg[%d].out[%d]=%f",j,num_count,leg[j].out[num_count]);
             } else {
               leg[j].out[num_count] = leg[j].out[num_count - 1];
             }
@@ -689,6 +693,7 @@ class adaption_node : public rclcpp::Node {
               leg[j].out[num_count] = 0.6;
             }
             //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "fin,leg[%d].out[%d]=%f",j,num_count,leg[j].out[num_count]);
+            
             leg[j].height[num_count] = leg[j].out[num_count];
 
             /*
