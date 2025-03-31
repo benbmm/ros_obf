@@ -19,7 +19,8 @@ void load_cpg(void);
 void turn(int);
 void cal_out_3_walk(int);
 
-#define limit_knee_output 1
+//將膝關節的控制值限制在0.3以下
+#define limit_knee_output 0
 
 #define _Maxstep 40000
 #define _count 1000
@@ -35,7 +36,7 @@ double pi[7] = {0}, ro[7] = {0},
        ladder[7] = {0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6};
 
 double thres = 0.03;
-int isBalanced =1;
+int isBalanced;
 
 double roll, pitch, yaw;
 double e[7];  // 存roll, pitch在六個方向的分量
@@ -129,14 +130,14 @@ class adaption_node : public rclcpp::Node {
     initialization();
     deep(step);
     cal_out_3_walk(step);
-    /*
+    
     if (reduce_by_min_135){
       reduce_by_min_if_nonzero(1);
     }
     if(reduce_by_min_246){
       reduce_by_min_if_nonzero(2);
     }
-    */
+   
     response->h1 = h[1];
     response->h2 = h[2];
     response->h3 = h[3];
@@ -428,6 +429,7 @@ class adaption_node : public rclcpp::Node {
             } else {
               leg[j].out[num_count] = leg[j].out[num_count - 1];
             }
+            
             //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "leg[%d].out[%d]=%f",j,num_count,leg[j].out[num_count]);
 
             // if(pitch==0 && roll==0){
