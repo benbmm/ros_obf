@@ -20,7 +20,7 @@ void turn(int);
 void cal_out_3_walk(int);
 
 //將膝關節的控制值限制在0.3以下
-#define limit_knee_output 0
+#define limit_knee_output 1
 
 #define _Maxstep 40000
 #define _count 1000
@@ -261,15 +261,13 @@ class adaption_node : public rclcpp::Node {
     isBalanced=1;
 
     for (int i = 1; i < 7; i++) {
-      if (e[i]<thres){
-        leg[i].deep[num_count]=0;
-      }else{
-        leg[i].deep[num_count] = e[i];
+      leg[i].deep[num_count] = e[i];
+      if (e[i]>thres){
         isBalanced=0;
       }
+    }
       // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
       // "leg[%d].deep[%d]=%f\n",i,num_count,e[i]);
-    }
   }
   void initialization() {
     for (int i = 1; i <= 6; i++) {
@@ -440,9 +438,10 @@ class adaption_node : public rclcpp::Node {
               leg[j].out[num_count - 1] = leg[j].ttemp;
               leg[j].out[num_count] = leg[j].out[num_count - 1];
 
-            } else if (leg[j].out[num_count] <= -0.6) {
+            } /* else if (leg[j].out[num_count] <= -0.6) {
               leg[j].out[num_count] = -0.6;
-            }
+            } */
+            leg[j].out[num_count] = std::clamp(leg[j].out[num_count], -0.6, 0.6);
             //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "fin.leg[%d].out[%d]=%f",j,num_count,leg[j].out[num_count]);
             leg[j].height[num_count] = leg[j].out[num_count];
 
@@ -689,9 +688,10 @@ class adaption_node : public rclcpp::Node {
             if (isBalanced) {
               leg[j].out[num_count - 1] = leg[j].ttemp;
               leg[j].out[num_count] = leg[j].out[num_count - 1];
-            } else if (leg[j].out[num_count] >= 0.6) {
+            } /* else if (leg[j].out[num_count] >= 0.6) {
               leg[j].out[num_count] = 0.6;
-            }
+            } */
+            leg[j].out[num_count] = std::clamp(leg[j].out[num_count], -0.6, 0.6);
             //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "fin,leg[%d].out[%d]=%f",j,num_count,leg[j].out[num_count]);
             
             leg[j].height[num_count] = leg[j].out[num_count];
