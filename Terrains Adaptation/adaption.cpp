@@ -20,7 +20,7 @@ void turn(int);
 void cal_out_3_walk(int);
 
 //將膝關節的控制值限制在0.3以下
-#define limit_knee_output 1
+#define limit_knee_output 0
 
 #define _Maxstep 40000
 #define _count 1000
@@ -130,14 +130,14 @@ class adaption_node : public rclcpp::Node {
     initialization();
     deep(step);
     cal_out_3_walk(step);
-    /* 
+    /*  
     if (reduce_by_min_135){
       reduce_by_min_if_nonzero(1);
     }
     if(reduce_by_min_246){
       reduce_by_min_if_nonzero(2);
     }
-    */
+     */
     response->h1 = h[1];
     response->h2 = h[2];
     response->h3 = h[3];
