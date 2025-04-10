@@ -50,6 +50,14 @@ int change=0;
 int reduce_by_min_135=0;
 int reduce_by_min_246=0;
 double min_abs_val;
+const double step_long = 0.2;
+const double Wfe = -1.5;  // Flexor&Extensor weight connection
+const double t1 = 0.5;    // orig = 1
+const double t2 = 7.5;    // orig = 15
+// const double U0 = 1.1;//3??????
+const double U0 = 1.2;  // 4??????
+const double b = 3;
+const double Wij = -1;
 
 
 
@@ -129,8 +137,9 @@ class adaption_node : public rclcpp::Node {
     int step = request->step;
 
     initialization();
-    deep(step);
-    cal_out_3_walk(step);
+    //deep(step);
+    init(step);
+    cal_out_3_sec(step);
     /*  
     if (reduce_by_min_135){
       reduce_by_min_if_nonzero(1);
@@ -275,6 +284,221 @@ class adaption_node : public rclcpp::Node {
       leg[i].lpara = kp[i];
       leg[i].lpara2 = kd[i] / 0.2;
     }
+  }
+  void init_cpg(int num_count){
+    for (int i = 1; i <= 6; i++) {
+      for (int j = 1; j <= 3; j++) {
+        for (int k = 0; k <= _count; k++) {
+          leg[i].osc[j].dUe[k] = 0;
+          leg[i].osc[j].Ue[k] = 0;
+          leg[i].osc[j].dUf[k] = 0;
+          leg[i].osc[j].Uf[k] = 0;
+          leg[i].osc[j].dVe[k] = 0;
+          leg[i].osc[j].Ve[k] = 0;
+          leg[i].osc[j].dVf[k] = 0;
+          leg[i].osc[j].Vf[k] = 0;
+          leg[i].osc[j].Ye[k] = 0;
+          leg[i].osc[j].Yf[k] = 0, leg[i].osc[j].Y[k] = 0;
+        }
+      }
+    }
+    for (int i = 1; i <= 6; i++) {
+      for (int j = 1; j <= 3; j++) {
+        leg[i].osc[j].Ue[1] = 0;
+        leg[i].osc[j].Ve[1] = 0;
+        do {
+          leg[i].osc[j].Uf[1] = (double(rand() % 10) / 10 + 0.1);
+          leg[i].osc[j].Vf[1] = (double(rand() % 10) / 10 + 0.1);
+        } while (leg[i].osc[j].Uf[1] == leg[i].osc[j].Vf[1]);
+      }
+    }
+  }
+  void cal_out_3_sec(int num_count) {
+    
+  
+    int count = num_count;
+    if (fabs(pitch) < 0.03) {
+      pitch = 0;
+    }
+    if (fabs(roll) < 0.03) {
+      roll = 0;
+    }
+    printf("pitch=%lf\t roll=%lf\n", pitch, roll);
+  
+    for (int i = 1; i <= 6; i++) {
+      int a = (i + 1) % 6;
+      if (a == 0) {
+        a = 6;
+      }
+      int aa = (i + 2) % 6;
+      if (aa == 0) {
+        aa = 6;
+      }
+      int aaa = (i + 3) % 6;
+      if (aaa == 0)
+        ;
+      {
+        aaa = 6;
+      }
+      int aaaa = (i + 4) % 6;
+      if (aaaa == 0) {
+        aaaa = 6;
+      }
+      int aaaaa = (i + 5) % 6;
+      if (aaaaa == 0) {
+        aaaaa = 6;
+      }
+  
+      //----------------------------------------calculate
+      //feed--------------------------------
+      double feed = 0;
+  
+      if (i == 1) {
+        feed = (pitch + roll) * 0.707;
+      }
+  
+      else if (i == 2) {
+        feed = roll;
+      }
+  
+      else if (i == 3) {
+        feed = (-pitch + roll) * 0.707;
+      }
+  
+      else if (i == 4) {
+        feed = (-pitch - roll) * 0.707;
+      }
+  
+      else if (i == 5) {
+        feed = -roll;
+      }
+  
+      else if (i == 6) {
+        feed = (pitch - roll) * 0.707;
+      }
+  
+      if (count <= 50) {
+        feed = 0;
+      }  // to avoid -nan
+  
+      // feed = 0;
+      // printf("i = %d\tfeed = %lf\n",i,feed);
+      //----------------------------------------calculate
+      //feed--------------------------------
+  
+      for (int j = 1; j <= 4; j++) {
+        if (j == 1 || j == 2 || j == 3) {
+          int k = (j + 1) % 3;
+          if (k == 0) {
+            k = 3;
+          }
+          int kk = (j + 2) % 3;
+          if (kk == 0) {
+            kk = 3;
+          }
+  
+          //**********************************Extensor
+          //neuron******************************************
+          leg[i].osc[j].dUe[count] =
+              (-leg[i].osc[j].Ue[count] + (Wfe * leg[i].osc[j].Yf[count]) -
+               (b * leg[i].osc[j].Ve[count]) + U0 +
+               (Wij * (ch_max(leg[i].osc[k].Ye[count]) +
+                       ch_max(leg[i].osc[kk].Ye[count]) +
+                       ch_max(leg[a].osc[j].Ye[count]) +
+                       ch_max(leg[aaaaa].osc[j].Ye[count])))) /
+              t1;
+          leg[i].osc[j].Ue[count + 1] =
+              leg[i].osc[j].Ue[count] + (step_long * leg[i].osc[j].dUe[count]);
+          leg[i].osc[j].Ye[count + 1] = max(0.00, leg[i].osc[j].Ue[count + 1]);
+  
+          leg[i].osc[j].dVe[count] =
+              (-leg[i].osc[j].Ve[count] + leg[i].osc[j].Ye[count + 1]) / t2;
+          leg[i].osc[j].Ve[count + 1] =
+              leg[i].osc[j].Ve[count] + (step_long * leg[i].osc[j].dVe[count]);
+          //**********************************Extensor
+          //neuron******************************************
+  
+          //**********************************Flexor
+          //neuron********************************************
+          leg[i].osc[j].dUf[count] =
+              (-leg[i].osc[j].Uf[count] + (Wfe * leg[i].osc[j].Ye[count]) -
+               (b * leg[i].osc[j].Vf[count]) + U0 +
+               (Wij * (ch_max(leg[i].osc[k].Yf[count]) +
+                       ch_max(leg[i].osc[kk].Yf[count]) +
+                       ch_max(leg[a].osc[j].Yf[count]) +
+                       ch_max(leg[aaaaa].osc[j].Yf[count])))) /
+              t1;
+          leg[i].osc[j].Uf[count + 1] =
+              leg[i].osc[j].Uf[count] + (step_long * leg[i].osc[j].dUf[count]);
+          leg[i].osc[j].Yf[count + 1] = max(0.00, leg[i].osc[j].Uf[count + 1]);
+  
+          leg[i].osc[j].dVf[count] =
+              (-leg[i].osc[j].Vf[count] + leg[i].osc[j].Yf[count + 1]) / t2;
+          leg[i].osc[j].Vf[count + 1] =
+              leg[i].osc[j].Vf[count] + (step_long * leg[i].osc[j].dVf[count]);
+          //**********************************Flexor
+          //neuron********************************************
+  
+          leg[i].osc[j].Y[count] =
+              leg[i].osc[j].Yf[count] - leg[i].osc[j].Ye[count];
+  
+        }
+  
+        else {
+          int k = 1;
+          int kk = 3;
+  
+          //**********************************Extensor
+          //neuron******************************************
+          leg[i].osc[j].dUe[count] =
+              (feed - leg[i].osc[j].Ue[count] + (Wfe * leg[i].osc[j].Yf[count]) -
+               (b * leg[i].osc[j].Ve[count]) + U0 +
+               (Wij * (ch_max(leg[i].osc[k].Ye[count]) +
+                       ch_max(leg[i].osc[kk].Ye[count]) +
+                       ch_max(leg[a].osc[j].Ye[count]) +
+                       ch_max(leg[aaaaa].osc[j].Ye[count])))) /
+              t1;
+          leg[i].osc[j].Ue[count + 1] =
+              leg[i].osc[j].Ue[count] + (step_long * leg[i].osc[j].dUe[count]);
+          leg[i].osc[j].Ye[count + 1] = max(0.00, leg[i].osc[j].Ue[count + 1]);
+  
+          leg[i].osc[j].dVe[count] =
+              (-leg[i].osc[j].Ve[count] + leg[i].osc[j].Ye[count + 1]) / t2;
+          leg[i].osc[j].Ve[count + 1] =
+              leg[i].osc[j].Ve[count] + (step_long * leg[i].osc[j].dVe[count]);
+          //**********************************Extensor
+          //neuron******************************************
+  
+          //**********************************Flexor
+          //neuron********************************************
+          leg[i].osc[j].dUf[count] =
+              (feed - leg[i].osc[j].Uf[count] + (Wfe * leg[i].osc[j].Ye[count]) -
+               (b * leg[i].osc[j].Vf[count]) + U0 +
+               (Wij * (ch_max(leg[i].osc[k].Yf[count]) +
+                       ch_max(leg[i].osc[kk].Yf[count]) +
+                       ch_max(leg[a].osc[j].Yf[count]) +
+                       ch_max(leg[aaaaa].osc[j].Yf[count])))) /
+              t1;
+          leg[i].osc[j].Uf[count + 1] =
+              leg[i].osc[j].Uf[count] + (step_long * leg[i].osc[j].dUf[count]);
+          leg[i].osc[j].Yf[count + 1] = max(0.00, leg[i].osc[j].Uf[count + 1]);
+  
+          leg[i].osc[j].dVf[count] =
+              (-leg[i].osc[j].Vf[count] + leg[i].osc[j].Yf[count + 1]) / t2;
+          leg[i].osc[j].Vf[count + 1] =
+              leg[i].osc[j].Vf[count] + (step_long * leg[i].osc[j].dVf[count]);
+          //**********************************Flexor
+          //neuron********************************************
+  
+          leg[i].osc[j].Y[count] =
+              leg[i].osc[j].Yf[count] - leg[i].osc[j].Ye[count];
+        }
+      }
+  
+      leg[i].deep[count] = (leg[i].osc[4].Y[count] - leg[i].osc[2].Y[count]);
+    }
+  
+    cal_out_3_walk(count);
   }
   void cal_out_3_walk(int num_count) {
     /* for (int i = 1; i < 7; i++) {
