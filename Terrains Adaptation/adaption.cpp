@@ -1,3 +1,4 @@
+//dev branch 是為了將判斷pitch roll是否平穩條件變嚴苛，在deep的時候判斷是否穩定，晃動幅度底較大的腳就可以繼續控制
 #include <math.h>
 
 #include <algorithm>
