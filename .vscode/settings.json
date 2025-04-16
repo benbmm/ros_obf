@@ -11,6 +11,9 @@
         "xiosbase": "cpp",
         "xlocale": "cpp",
         "format": "cpp",
-        "xutility": "cpp"
+        "xutility": "cpp",
+        "ios": "cpp",
+        "iostream": "cpp",
+        "fstream": "cpp"
     }
 }

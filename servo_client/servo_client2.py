@@ -85,8 +85,8 @@ def walk(x, a, b):
         a=0.5
         b=-0.5
     print(f"c={c}\td={d}\n")
-    #a=0
-    #b=0
+    a=0
+    b=0
     #print(f"e={e}\n")
     servos["R00"].angle=(cpg_deg_change(leg[1].osc[1].Y[x] * a))
     servos["R01"].angle=(cpg_deg_change(leg[1].osc[2].Y[x] * c)+e)
@@ -228,6 +228,7 @@ class Servo(Node):
     def callback(self):
         self.step+=1
         #print(f"step:{self.step}\n")
+        #self.get_logger().info(f'send_reques:step={self.step}')
         if(adaption_mode):
             self.send_request_adaption()
         if ((leg[1].osc[1].Y[self.step - 1] <= 0 and leg[1].osc[1].Y[self.step] > 0) or
@@ -240,8 +241,8 @@ class Servo(Node):
         interval = current_time - self.last_execution_time
         #self.get_logger().info(f'interval: {interval:.4f} (s)')
         self.last_execution_time = current_time
-        #self.get_logger().info(f'walk:step={self.step}')
-        walk(self.step,self.a,self.b)
+        #self.get_logger().info(f'walk:step={self.step-1}')
+        walk(self.step-1,self.a,self.b)
 
     def send_request(self):
         #print("send_request\n")
@@ -259,8 +260,8 @@ class Servo(Node):
     #傳入adaption node的request，傳入step
     def send_request_adaption(self):
         #print("send_request_adaption\n")
-        #self.get_logger().info(f'send_request_adaption:step={self.step+1}')
-        self.req_adaption.step=self.step+1
+        #self.get_logger().info(f'send_request_adaption:step={self.step}')
+        self.req_adaption.step=self.step
         self.future_adaption = self.cli_adaption.call_async(self.req_adaption)
         self.future_adaption.add_done_callback(self.handle_response_adaption)
 
@@ -281,11 +282,12 @@ class Servo(Node):
             if (self.step>0):
                 for i in range(1,7):
                     #self.get_logger().info(f"i={i}")
-                    #self.get_logger().info(f"leg[{i}].osc[2].Y[{self.step+1}]={leg[i].osc[2].Y[self.step+1]}")
+                    #self.get_logger().info(f"leg[{i}].osc[2].Y[{self.step}]={leg[i].osc[2].Y[self.step]}")
                     #print(f"diff={self.h[i]-leg[1].osc[2].Y[self.step]}")
-                    if (self.h[i] != leg[i].osc[2].Y[self.step+1]):
-                        #self.get_logger().info(f"change,leg[{i}].osc[2].Y[{self.step+1}]={self.h[i]}")
-                        leg[i].osc[2].Y[self.step+1]=self.h[i]
+                    self.get_logger().info(f"self.h[{i}]={self.h[i]}\tstep={self.step}")
+                    if (self.h[i] != leg[i].osc[2].Y[self.step]):
+                        #self.get_logger().info(f"change,leg[{i}].osc[2].Y[{self.step}]={self.h[i]}")
+                        leg[i].osc[2].Y[self.step]=self.h[i]
                     """ else:
                         self.get_logger().info("no change")
             else:

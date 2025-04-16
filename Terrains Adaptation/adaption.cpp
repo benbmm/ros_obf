@@ -1,13 +1,14 @@
-//dev branch 是為了將判斷pitch roll是否平穩條件變嚴苛，在deep的時候判斷是否穩定，晃動幅度底較大的腳就可以繼續控制
+// dev branch 是為了將判斷pitch
+// roll是否平穩條件變嚴苛，在deep的時候判斷是否穩定，晃動幅度底較大的腳就可以繼續控制
 #include <math.h>
 
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <vector>
-#include <cmath>
 
 // ROS2
 #include "interfaces/srv/command_adaption.hpp"
@@ -17,10 +18,14 @@
 #include "tf2/LinearMath/Quaternion.h"
 
 void load_cpg(void);
+void init_cpg();
 void turn(int);
+void cal_out_3_sec(int);
 void cal_out_3_walk(int);
 
-//將膝關節的控制值限制在0.3以下
+double ch_max(double);
+
+// 將膝關節的控制值限制在0.3以下
 #define limit_knee_output 0
 
 #define _Maxstep 40000
@@ -45,21 +50,19 @@ double temp = 0, number[7] = {0};
 double kp[7] = {0, -14, -16.25, -14, 14, 16.25, 14};
 double kd[7] = {0, -0.2, -0.2, -0.2, 0.2, 0.2, 0.2};
 double h[7] = {0};
-//當輸出的膝關節控制量發生變化，則change=1
-int change=0;
-int reduce_by_min_135=0;
-int reduce_by_min_246=0;
+// 當輸出的膝關節控制量發生變化，則change=1
+int change = 0;
+int reduce_by_min_135 = 0;
+int reduce_by_min_246 = 0;
 double min_abs_val;
 const double step_long = 0.2;
 const double Wfe = -1.5;  // Flexor&Extensor weight connection
 const double t1 = 0.5;    // orig = 1
 const double t2 = 7.5;    // orig = 15
 // const double U0 = 1.1;//3??????
-const double U0 = 1.2;  // 4??????
+const double U0 = 1.3;  // 4??????
 const double b = 3;
 const double Wij = -1;
-
-
 
 using namespace std;
 
@@ -116,20 +119,20 @@ class adaption_node : public rclcpp::Node {
     fclose(pitch_data);
     fclose(roll_data);
 
-    roll=-roll;
-    //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Roll: %f, Pitch: %f, Yaw: %f",roll, pitch, yaw);
-    
+    roll = -roll;
+    // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Roll: %f, Pitch: %f, Yaw:
+    // %f",roll, pitch, yaw);
+
     /* if (fabs(pitch) < thres) {
-      //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "pitch: %f, Roll<%f",pitch, thres);
-      pitch = 0;
-      
+      //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "pitch: %f, Roll<%f",pitch,
+    thres); pitch = 0;
+
     }
     if (fabs(roll) < thres) {
-      //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Roll: %f, Roll<%f",roll, thres);
-      roll = 0;
-      
+      //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Roll: %f, Roll<%f",roll,
+    thres); roll = 0;
+
     } */
-    
   }
   void Service_callback(
       const std::shared_ptr<interfaces::srv::CommandAdaption::Request> request,
@@ -137,10 +140,10 @@ class adaption_node : public rclcpp::Node {
     int step = request->step;
 
     initialization();
-    //deep(step);
-    init(step);
+    // deep(step);
     cal_out_3_sec(step);
-    /*  
+    // cal_out_3_walk(step);
+    /*
     if (reduce_by_min_135){
       reduce_by_min_if_nonzero(1);
     }
@@ -148,6 +151,7 @@ class adaption_node : public rclcpp::Node {
       reduce_by_min_if_nonzero(2);
     }
      */
+
     response->h1 = h[1];
     response->h2 = h[2];
     response->h3 = h[3];
@@ -155,61 +159,67 @@ class adaption_node : public rclcpp::Node {
     response->h5 = h[5];
     response->h6 = h[6];
     response->change = change;
-
+    FILE *h1 = fopen("/home/user/ros2_obf_ws/src/h1.txt", "a");
+    fprintf(h1, "%f\n", h[1]);
+    fclose(h1);
 
     // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "adapting{%d}", step);
-    //RCLCPP_INFO(rclcpp::get_logger("rclcpp"),"h1: %f\th2: %f\th3: %f\th4: %f\th5: %f\th6: %f\nchange:%d\n", h[1], h[2],h[3], h[4], h[5], h[6],change);
+    // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),"h1: %f\th2: %f\th3: %f\th4:
+    // %f\th5: %f\th6: %f\nchange:%d\n", h[1], h[2],h[3], h[4], h[5],
+    // h[6],change);
     double ctrl_val;
     int clad;
-    if (leg[1].osc[2].Y[step]>=0 || leg[6].osc[2].Y[step]<=0){
-      if(leg[1].osc[2].Y[step]==0){
-        ctrl_val=abs(h[1]);
-        clad=leg[1].clad;
-      }else{
-        ctrl_val=abs(h[6]);
-        clad=leg[6].clad;
+    if (leg[1].osc[2].Y[step] >= 0 || leg[6].osc[2].Y[step] <= 0) {
+      if (leg[1].osc[2].Y[step] == 0) {
+        ctrl_val = abs(h[1]);
+        clad = leg[1].clad;
+      } else {
+        ctrl_val = abs(h[6]);
+        clad = leg[6].clad;
       }
-    }else{
-      ctrl_val=999;
+    } else {
+      ctrl_val = 999;
     }
-      
-	RCLCPP_INFO(rclcpp::get_logger("rclcpp"),"pitch:%f\troll:%f\tchange:%d\nctrl_val:%f\tclad:%d\n", pitch,roll,change,ctrl_val,clad);
+
+    RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
+                "pitch:%f\troll:%f\tchange:%d\nctrl_val:%f\tclad:%d\n", pitch,
+                roll, change, ctrl_val, clad);
   }
-  void reduce_by_min_if_nonzero(int set){
-    if(set==1){
+  void reduce_by_min_if_nonzero(int set) {
+    if (set == 1) {
       min_abs_val = std::min({std::abs(h[1]), std::abs(h[3]), std::abs(h[5])});
-      if (min_abs_val != 0){
-        if(std::abs(h[1]) == min_abs_val){
-          if(h[1]>=0){
-            h[1]+=h[1];
-            h[3]+=h[1];
-            h[5]-=h[1];
-          }else{
-            h[1]-=h[1];
-            h[3]-=h[1];
-            h[5]+=h[1];
+      if (min_abs_val != 0) {
+        if (std::abs(h[1]) == min_abs_val) {
+          if (h[1] >= 0) {
+            h[1] += h[1];
+            h[3] += h[1];
+            h[5] -= h[1];
+          } else {
+            h[1] -= h[1];
+            h[3] -= h[1];
+            h[5] += h[1];
           }
         }
-        if(std::abs(h[3]) == min_abs_val){
-          if(h[3]>=0){
-            h[1]+=h[3];
-            h[3]+=h[3];
-            h[5]-=h[3];
-          }else{
-            h[1]-=h[3];
-            h[3]-=h[3];
-            h[5]+=h[3];
+        if (std::abs(h[3]) == min_abs_val) {
+          if (h[3] >= 0) {
+            h[1] += h[3];
+            h[3] += h[3];
+            h[5] -= h[3];
+          } else {
+            h[1] -= h[3];
+            h[3] -= h[3];
+            h[5] += h[3];
           }
         }
-        if(std::abs(h[5]) == min_abs_val){
-          if(h[5]>=0){
-            h[1]+=h[5];
-            h[3]+=h[5];
-            h[5]-=h[5];
-          }else{
-            h[1]-=h[5];
-            h[3]-=h[5];
-            h[5]+=h[5];
+        if (std::abs(h[5]) == min_abs_val) {
+          if (h[5] >= 0) {
+            h[1] += h[5];
+            h[3] += h[5];
+            h[5] -= h[5];
+          } else {
+            h[1] -= h[5];
+            h[3] -= h[5];
+            h[5] += h[5];
           }
         }
       }
@@ -217,40 +227,40 @@ class adaption_node : public rclcpp::Node {
       h[3] = std::clamp(h[3], -0.6, 0.6);
       h[5] = std::clamp(h[5], -0.6, 0.6);
     }
-    if(set==2){
+    if (set == 2) {
       min_abs_val = std::min({std::abs(h[2]), std::abs(h[4]), std::abs(h[6])});
-      if (min_abs_val != 0){
-        if(std::abs(h[2]) == min_abs_val){
-          if(h[2]>=0){
-            h[2]+=h[2];
-            h[4]-=h[2];
-            h[6]-=h[2];
-          }else{
-            h[2]-=h[2];
-            h[4]+=h[2];
-            h[6]+=h[2];
+      if (min_abs_val != 0) {
+        if (std::abs(h[2]) == min_abs_val) {
+          if (h[2] >= 0) {
+            h[2] += h[2];
+            h[4] -= h[2];
+            h[6] -= h[2];
+          } else {
+            h[2] -= h[2];
+            h[4] += h[2];
+            h[6] += h[2];
           }
         }
-        if(std::abs(h[4]) == min_abs_val){
-          if(h[4]>=0){
-            h[2]+=h[4];
-            h[4]-=h[4];
-            h[6]-=h[4];
-          }else{
-            h[2]-=h[4];
-            h[4]+=h[4];
-            h[6]+=h[4];
+        if (std::abs(h[4]) == min_abs_val) {
+          if (h[4] >= 0) {
+            h[2] += h[4];
+            h[4] -= h[4];
+            h[6] -= h[4];
+          } else {
+            h[2] -= h[4];
+            h[4] += h[4];
+            h[6] += h[4];
           }
         }
-        if(std::abs(h[6]) == min_abs_val){
-          if(h[6]>=0){
-            h[2]+=h[6];
-            h[4]-=h[6];
-            h[6]-=h[6];
-          }else{
-            h[2]-=h[6];
-            h[4]+=h[6];
-            h[6]+=h[6];
+        if (std::abs(h[6]) == min_abs_val) {
+          if (h[6] >= 0) {
+            h[2] += h[6];
+            h[4] -= h[6];
+            h[6] -= h[6];
+          } else {
+            h[2] -= h[6];
+            h[4] += h[6];
+            h[6] += h[6];
           }
         }
       }
@@ -258,8 +268,17 @@ class adaption_node : public rclcpp::Node {
       h[4] = std::clamp(h[4], -0.6, 0.6);
       h[6] = std::clamp(h[6], -0.6, 0.6);
     }
-     
   }
+  double ch_max(double a) {
+    if (a >= 0) {
+      return a;
+    }
+
+    else {
+      return 0;
+    }
+  }
+
   void deep(int num_count) {
     e[1] = (pitch + roll) * sqrt(0.5);
     e[2] = roll;
@@ -268,16 +287,21 @@ class adaption_node : public rclcpp::Node {
     e[5] = -roll;
     e[6] = (pitch - roll) * sqrt(0.5);
 
-    isBalanced=1;
+    isBalanced = 1;
 
     for (int i = 1; i < 7; i++) {
       leg[i].deep[num_count] = e[i];
-      if (e[i]>thres){
-        isBalanced=0;
+      if (e[i] > thres) {
+        isBalanced = 0;
+      }
+      if (i == 1) {
+        FILE *deep1 = fopen("/home/user/ros2_obf_ws/src/deep1.txt", "a");
+        fprintf(deep1, "%f\n", leg[i].deep[num_count]);
+        fclose(deep1);
       }
     }
-      // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
-      // "leg[%d].deep[%d]=%f\n",i,num_count,e[i]);
+    // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
+    // "leg[%d].deep[%d]=%f\n",i,num_count,e[i]);
   }
   void initialization() {
     for (int i = 1; i <= 6; i++) {
@@ -285,37 +309,8 @@ class adaption_node : public rclcpp::Node {
       leg[i].lpara2 = kd[i] / 0.2;
     }
   }
-  void init_cpg(int num_count){
-    for (int i = 1; i <= 6; i++) {
-      for (int j = 1; j <= 3; j++) {
-        for (int k = 0; k <= _count; k++) {
-          leg[i].osc[j].dUe[k] = 0;
-          leg[i].osc[j].Ue[k] = 0;
-          leg[i].osc[j].dUf[k] = 0;
-          leg[i].osc[j].Uf[k] = 0;
-          leg[i].osc[j].dVe[k] = 0;
-          leg[i].osc[j].Ve[k] = 0;
-          leg[i].osc[j].dVf[k] = 0;
-          leg[i].osc[j].Vf[k] = 0;
-          leg[i].osc[j].Ye[k] = 0;
-          leg[i].osc[j].Yf[k] = 0, leg[i].osc[j].Y[k] = 0;
-        }
-      }
-    }
-    for (int i = 1; i <= 6; i++) {
-      for (int j = 1; j <= 3; j++) {
-        leg[i].osc[j].Ue[1] = 0;
-        leg[i].osc[j].Ve[1] = 0;
-        do {
-          leg[i].osc[j].Uf[1] = (double(rand() % 10) / 10 + 0.1);
-          leg[i].osc[j].Vf[1] = (double(rand() % 10) / 10 + 0.1);
-        } while (leg[i].osc[j].Uf[1] == leg[i].osc[j].Vf[1]);
-      }
-    }
-  }
+
   void cal_out_3_sec(int num_count) {
-    
-  
     int count = num_count;
     if (fabs(pitch) < 0.03) {
       pitch = 0;
@@ -323,8 +318,7 @@ class adaption_node : public rclcpp::Node {
     if (fabs(roll) < 0.03) {
       roll = 0;
     }
-    printf("pitch=%lf\t roll=%lf\n", pitch, roll);
-  
+
     for (int i = 1; i <= 6; i++) {
       int a = (i + 1) % 6;
       if (a == 0) {
@@ -335,9 +329,7 @@ class adaption_node : public rclcpp::Node {
         aa = 6;
       }
       int aaa = (i + 3) % 6;
-      if (aaa == 0)
-        ;
-      {
+      if (aaa == 0) {
         aaa = 6;
       }
       int aaaa = (i + 4) % 6;
@@ -348,44 +340,37 @@ class adaption_node : public rclcpp::Node {
       if (aaaaa == 0) {
         aaaaa = 6;
       }
-  
+
       //----------------------------------------calculate
-      //feed--------------------------------
+      // feed--------------------------------
       double feed = 0;
-  
       if (i == 1) {
         feed = (pitch + roll) * 0.707;
-      }
-  
-      else if (i == 2) {
+      } else if (i == 2) {
         feed = roll;
       }
-  
+
       else if (i == 3) {
         feed = (-pitch + roll) * 0.707;
       }
-  
+
       else if (i == 4) {
         feed = (-pitch - roll) * 0.707;
       }
-  
+
       else if (i == 5) {
         feed = -roll;
       }
-  
+
       else if (i == 6) {
         feed = (pitch - roll) * 0.707;
       }
-  
-      if (count <= 50) {
-        feed = 0;
-      }  // to avoid -nan
-  
+
       // feed = 0;
       // printf("i = %d\tfeed = %lf\n",i,feed);
       //----------------------------------------calculate
-      //feed--------------------------------
-  
+      // feed--------------------------------
+
       for (int j = 1; j <= 4; j++) {
         if (j == 1 || j == 2 || j == 3) {
           int k = (j + 1) % 3;
@@ -396,9 +381,9 @@ class adaption_node : public rclcpp::Node {
           if (kk == 0) {
             kk = 3;
           }
-  
-          //**********************************Extensor
-          //neuron******************************************
+
+          //*********************** Extensor neuron *************************
+
           leg[i].osc[j].dUe[count] =
               (-leg[i].osc[j].Ue[count] + (Wfe * leg[i].osc[j].Yf[count]) -
                (b * leg[i].osc[j].Ve[count]) + U0 +
@@ -407,19 +392,27 @@ class adaption_node : public rclcpp::Node {
                        ch_max(leg[a].osc[j].Ye[count]) +
                        ch_max(leg[aaaaa].osc[j].Ye[count])))) /
               t1;
+
           leg[i].osc[j].Ue[count + 1] =
               leg[i].osc[j].Ue[count] + (step_long * leg[i].osc[j].dUe[count]);
+
           leg[i].osc[j].Ye[count + 1] = max(0.00, leg[i].osc[j].Ue[count + 1]);
-  
+
           leg[i].osc[j].dVe[count] =
               (-leg[i].osc[j].Ve[count] + leg[i].osc[j].Ye[count + 1]) / t2;
+
           leg[i].osc[j].Ve[count + 1] =
               leg[i].osc[j].Ve[count] + (step_long * leg[i].osc[j].dVe[count]);
-          //**********************************Extensor
-          //neuron******************************************
-  
-          //**********************************Flexor
-          //neuron********************************************
+
+          // === Log Extensor outputs ===
+         /*  RCLCPP_INFO(
+              rclcpp::get_logger("rclcpp"),
+              "EXT: i=%d j=%d count=%d | Ue=%.5f dUe=%.5f Ye=%.5f Ve=%.5f", i,
+              j, count, leg[i].osc[j].Ue[count + 1], leg[i].osc[j].dUe[count],
+              leg[i].osc[j].Ye[count + 1], leg[i].osc[j].Ve[count + 1]); */
+
+          //*********************** Flexor neuron *************************
+
           leg[i].osc[j].dUf[count] =
               (-leg[i].osc[j].Uf[count] + (Wfe * leg[i].osc[j].Ye[count]) -
                (b * leg[i].osc[j].Vf[count]) + U0 +
@@ -428,31 +421,43 @@ class adaption_node : public rclcpp::Node {
                        ch_max(leg[a].osc[j].Yf[count]) +
                        ch_max(leg[aaaaa].osc[j].Yf[count])))) /
               t1;
+
           leg[i].osc[j].Uf[count + 1] =
               leg[i].osc[j].Uf[count] + (step_long * leg[i].osc[j].dUf[count]);
+
           leg[i].osc[j].Yf[count + 1] = max(0.00, leg[i].osc[j].Uf[count + 1]);
-  
+
           leg[i].osc[j].dVf[count] =
               (-leg[i].osc[j].Vf[count] + leg[i].osc[j].Yf[count + 1]) / t2;
+
           leg[i].osc[j].Vf[count + 1] =
               leg[i].osc[j].Vf[count] + (step_long * leg[i].osc[j].dVf[count]);
+
+          // === Log Flexor outputs ===
+          /* RCLCPP_INFO(
+              rclcpp::get_logger("rclcpp"),
+              "FLEX: i=%d j=%d count=%d | Uf=%.5f dUf=%.5f Yf=%.5f Vf=%.5f", i,
+              j, count, leg[i].osc[j].Uf[count + 1], leg[i].osc[j].dUf[count],
+              leg[i].osc[j].Yf[count + 1], leg[i].osc[j].Vf[count + 1]); */
           //**********************************Flexor
-          //neuron********************************************
-  
-          leg[i].osc[j].Y[count] =
-              leg[i].osc[j].Yf[count] - leg[i].osc[j].Ye[count];
-  
+          // neuron********************************************
+
+          leg[i].osc[j].Y[count] =leg[i].osc[j].Yf[count] - leg[i].osc[j].Ye[count];
+          
+          
+
         }
-  
+
         else {
           int k = 1;
           int kk = 3;
-  
+
           //**********************************Extensor
-          //neuron******************************************
+          // neuron******************************************
           leg[i].osc[j].dUe[count] =
-              (feed - leg[i].osc[j].Ue[count] + (Wfe * leg[i].osc[j].Yf[count]) -
-               (b * leg[i].osc[j].Ve[count]) + U0 +
+              (feed - leg[i].osc[j].Ue[count] +
+               (Wfe * leg[i].osc[j].Yf[count]) - (b * leg[i].osc[j].Ve[count]) +
+               U0 +
                (Wij * (ch_max(leg[i].osc[k].Ye[count]) +
                        ch_max(leg[i].osc[kk].Ye[count]) +
                        ch_max(leg[a].osc[j].Ye[count]) +
@@ -461,19 +466,20 @@ class adaption_node : public rclcpp::Node {
           leg[i].osc[j].Ue[count + 1] =
               leg[i].osc[j].Ue[count] + (step_long * leg[i].osc[j].dUe[count]);
           leg[i].osc[j].Ye[count + 1] = max(0.00, leg[i].osc[j].Ue[count + 1]);
-  
+
           leg[i].osc[j].dVe[count] =
               (-leg[i].osc[j].Ve[count] + leg[i].osc[j].Ye[count + 1]) / t2;
           leg[i].osc[j].Ve[count + 1] =
               leg[i].osc[j].Ve[count] + (step_long * leg[i].osc[j].dVe[count]);
           //**********************************Extensor
-          //neuron******************************************
-  
+          // neuron******************************************
+
           //**********************************Flexor
-          //neuron********************************************
+          // neuron********************************************
           leg[i].osc[j].dUf[count] =
-              (feed - leg[i].osc[j].Uf[count] + (Wfe * leg[i].osc[j].Ye[count]) -
-               (b * leg[i].osc[j].Vf[count]) + U0 +
+              (feed - leg[i].osc[j].Uf[count] +
+               (Wfe * leg[i].osc[j].Ye[count]) - (b * leg[i].osc[j].Vf[count]) +
+               U0 +
                (Wij * (ch_max(leg[i].osc[k].Yf[count]) +
                        ch_max(leg[i].osc[kk].Yf[count]) +
                        ch_max(leg[a].osc[j].Yf[count]) +
@@ -482,35 +488,63 @@ class adaption_node : public rclcpp::Node {
           leg[i].osc[j].Uf[count + 1] =
               leg[i].osc[j].Uf[count] + (step_long * leg[i].osc[j].dUf[count]);
           leg[i].osc[j].Yf[count + 1] = max(0.00, leg[i].osc[j].Uf[count + 1]);
-  
+
           leg[i].osc[j].dVf[count] =
               (-leg[i].osc[j].Vf[count] + leg[i].osc[j].Yf[count + 1]) / t2;
           leg[i].osc[j].Vf[count + 1] =
               leg[i].osc[j].Vf[count] + (step_long * leg[i].osc[j].dVf[count]);
           //**********************************Flexor
-          //neuron********************************************
-  
+          // neuron********************************************
+
           leg[i].osc[j].Y[count] =
               leg[i].osc[j].Yf[count] - leg[i].osc[j].Ye[count];
         }
+        /* RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "leg[%d].osc[%d].Y[%d]=%f", i,
+                    j, count, leg[i].osc[j].Ye[count]); */
       }
-  
+
       leg[i].deep[count] = (leg[i].osc[4].Y[count] - leg[i].osc[2].Y[count]);
+      if (i == 1) {
+        FILE *deep1 = fopen("/home/user/ros2_obf_ws/src/deep1.txt", "a");
+        fprintf(deep1, "%f\n", leg[i].deep[count]);
+        fclose(deep1);
+      }
     }
-  
+
     cal_out_3_walk(count);
   }
   void cal_out_3_walk(int num_count) {
+    for (int i = 0; i <= num_count; ++i) {
+      if (leg[2].osc[3].Y[i] < 0) {
+        leg[2].osc[3].Y[i] = 0;
+      }
+      if (leg[5].osc[3].Y[i] < 0) {
+        leg[5].osc[3].Y[i] = 0;
+      }
+      for (int j = 1; j <= 6; ++j) {
+        if (leg[j].osc[2].Y[i] < 0) {
+          leg[j].osc[2].Y[i] = 0;
+        }
+        if (j <= 3) {
+          leg[j].osc[2].Y[i] = -leg[j].osc[2].Y[i];
+          leg[j].osc[3].Y[i] = -leg[j].osc[3].Y[i];
+        } else {
+          leg[j].osc[1].Y[i] = -leg[j].osc[1].Y[i];
+        }
+      }
+      leg[1].osc[3].Y[i] = -leg[1].osc[3].Y[i];
+      leg[6].osc[3].Y[i] = -leg[6].osc[3].Y[i];
+    }
     /* for (int i = 1; i < 7; i++) {
       printf("deep[%d]=%f\t",i,leg[i].deep[num_count]);
     }
     printf("\n"); */
-    reduce_by_min_135=0;
-    reduce_by_min_246=0;
-    change=0;
+    reduce_by_min_135 = 0;
+    reduce_by_min_246 = 0;
+    change = 0;
     for (int j = 1; j <= 6; j++) {
       leg[j].height[num_count] = leg[j].height[num_count - 1];
-      //RCLCPP_INFO(rclcpp::get_logger("rclcpp"),"leg[%d].height[%d]=%f",j,num_count,leg[j].height[num_count]);
+      // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),"leg[%d].height[%d]=%f",j,num_count,leg[j].height[num_count]);
       number[j] = fabs(leg[j].height[num_count]);
     }
     for (int a = 1; a <= 5; a = a + 2) {
@@ -549,20 +583,24 @@ class adaption_node : public rclcpp::Node {
         }
         //------------------------------------------------------------------------------------
 
-        //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "leg[%d].osc[2].Y[%d]=%f,173",j, num_count, leg[j].osc[2].Y[num_count]);
+        // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
+        // "leg[%d].osc[2].Y[%d]=%f,173",j, num_count,
+        // leg[j].osc[2].Y[num_count]);
         if (leg[j].osc[2].Y[num_count] < 0) {
-          //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "ww=%d", leg[j].ww);
+          // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "ww=%d", leg[j].ww);
           if (leg[j].ww ==
               1) {  // when switch in this condition(>0),use number of "no" to
                     // judge if it's success in adjust or not
 
             if (leg[j].no >= 10) {
-              //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "no=%d,adjust success",leg[j].no);
+              // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "no=%d,adjust
+              // success",leg[j].no);
               judge[j] = 1;  // adjust success
               leg[j].no = 0;
               leg[j].ww = 2;
             } else {
-              //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "no=%d,adjust failed",leg[j].no);
+              // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "no=%d,adjust
+              // failed",leg[j].no);
               judge[j] = 2;  // adjust failed
               leg[j].ww = 2;
               leg[j].no = 0;
@@ -610,7 +648,8 @@ class adaption_node : public rclcpp::Node {
           //*************************************condition
           // 1*************************************
           if (judge[j] == 1) {  // no need to adjust, use last time's height
-            //RCLCPP_INFO(rclcpp::get_logger("rclcpp"),"no need to adjust\t231\n");
+            // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),"no need to
+            // adjust\t231\n");
             if (j == 1 || j == 3) {
               if (number[5] >= 0) {
                 h[j] = leg[j].height[num_count] + number[5];
@@ -642,7 +681,8 @@ class adaption_node : public rclcpp::Node {
           //*************************************condition
           // 2*************************************
           else if (judge[j] == 2) {  // need to adjust again
-            //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "need to adjust\t263\n");
+            // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "need to
+            // adjust\t263\n");
             if (leg[j].deep[num_count] * leg[j].lpara +
                     (leg[j].deep[num_count] - leg[j].deep[num_count - 1]) *
                         leg[j].lpara2 <=
@@ -651,12 +691,14 @@ class adaption_node : public rclcpp::Node {
                   leg[j].deep[num_count] * leg[j].lpara +
                   (leg[j].deep[num_count] - leg[j].deep[num_count - 1]) *
                       leg[j].lpara2;
-                      RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "leg[%d].out[%d]=%f",j,num_count,leg[j].out[num_count]);
+              RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "leg[%d].out[%d]=%f", j,
+                          num_count, leg[j].out[num_count]);
             } else {
               leg[j].out[num_count] = leg[j].out[num_count - 1];
             }
-            
-            //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "leg[%d].out[%d]=%f",j,num_count,leg[j].out[num_count]);
+
+            // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
+            // "leg[%d].out[%d]=%f",j,num_count,leg[j].out[num_count]);
 
             // if(pitch==0 && roll==0){
             if (isBalanced) {
@@ -666,8 +708,10 @@ class adaption_node : public rclcpp::Node {
             } /* else if (leg[j].out[num_count] <= -0.6) {
               leg[j].out[num_count] = -0.6;
             } */
-            leg[j].out[num_count] = std::clamp(leg[j].out[num_count], -0.6, 0.6);
-            //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "fin.leg[%d].out[%d]=%f",j,num_count,leg[j].out[num_count]);
+            leg[j].out[num_count] =
+                std::clamp(leg[j].out[num_count], -0.6, 0.6);
+            // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
+            // "fin.leg[%d].out[%d]=%f",j,num_count,leg[j].out[num_count]);
             leg[j].height[num_count] = leg[j].out[num_count];
 
             /*
@@ -681,13 +725,13 @@ class adaption_node : public rclcpp::Node {
                 h[j] = -ladder[2];
                 leg[j].ttemp = -ladder[2];
                 leg[j].clad = 2;
-                change=1;
+                change = 1;
                 printf("1realout[%d]=%lf\t", j, -ladder[2]);
               } else {
                 h[j] = leg[j].height[num_count];
                 leg[j].ttemp = leg[j].height[num_count];
                 leg[j].clad = 1;
-                change=1;
+                change = 1;
                 printf("1realout[%d]=%lf\t", j, leg[j].height[num_count]);
               }
             }
@@ -696,19 +740,20 @@ class adaption_node : public rclcpp::Node {
               if (fabs(leg[j].height[num_count]) > ladder[3]) {
                 h[j] = -ladder[3];
                 leg[j].ttemp = -ladder[3];
-                if (limit_knee_output){
+                if (limit_knee_output) {
                   leg[j].clad = 2;
-                }else{
+                } else {
                   leg[j].clad = 3;
                 }
-                change=1;
+                change = 1;
                 printf("2realout[%d]=%lf\t", j, -ladder[3]);
-                //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "ffffffffffffffffffffffffffffffffff");
+                // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
+                // "ffffffffffffffffffffffffffffffffff");
               } else {
                 h[j] = leg[j].height[num_count];
                 leg[j].ttemp = leg[j].height[num_count];
                 leg[j].clad = 2;
-                change=1;
+                change = 1;
                 printf("2realout[%d]=%lf\t", j, leg[j].height[num_count]);
               }
             }
@@ -718,13 +763,13 @@ class adaption_node : public rclcpp::Node {
                 h[j] = -ladder[4];
                 leg[j].ttemp = -ladder[4];
                 leg[j].clad = 4;
-                change=1;
+                change = 1;
                 printf("3realout[%d]=%lf\t", j, -ladder[4]);
               } else {
                 h[j] = leg[j].height[num_count];
                 leg[j].ttemp = leg[j].height[num_count];
                 leg[j].clad = 3;
-                change=1;
+                change = 1;
                 printf("3realout[%d]=%lf\t", j, leg[j].height[num_count]);
               }
             }
@@ -734,13 +779,13 @@ class adaption_node : public rclcpp::Node {
                 h[j] = -ladder[5];
                 leg[j].ttemp = -ladder[5];
                 leg[j].clad = 5;
-                change=1;
+                change = 1;
                 printf("4realout[%d]=%lf\t", j, -ladder[5]);
               } else {
                 h[j] = leg[j].height[num_count];
                 leg[j].ttemp = leg[j].height[num_count];
                 leg[j].clad = 4;
-                change=1;
+                change = 1;
                 printf("4realout[%d]=%lf\t", j, leg[j].height[num_count]);
               }
             }
@@ -750,20 +795,20 @@ class adaption_node : public rclcpp::Node {
                 h[j] = -ladder[6];
                 leg[j].ttemp = -ladder[6];
                 leg[j].clad = 5;
-                change=1;
+                change = 1;
                 printf("5realout[%d]=%lf\t", j, -ladder[6]);
               } else {
                 h[j] = leg[j].height[num_count];
                 leg[j].ttemp = leg[j].height[num_count];
                 leg[j].clad = 5;
-                change=1;
+                change = 1;
                 printf("5realout[%d]=%lf\t", j, leg[j].height[num_count]);
               }
             }
-            if(j==1 or j==3){
-              reduce_by_min_135=1;
-            }else{
-              reduce_by_min_246=1;
+            if (j == 1 or j == 3) {
+              reduce_by_min_135 = 1;
+            } else {
+              reduce_by_min_246 = 1;
             }
             //*/
             kkk[j] = 0;
@@ -773,9 +818,10 @@ class adaption_node : public rclcpp::Node {
           //-------------------------------------
           pi[j] = pitch;
           ro[j] = roll;
-          //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "pitch=%f,roll=%f,373",pitch, roll);
+          // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
+          // "pitch=%f,roll=%f,373",pitch, roll);
           if (isBalanced) {  // no need to adjust
-            //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "no++");
+            // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "no++");
             leg[j].no++;
           }
           // printf("judge[0]=%d\n",judge[0]);
@@ -799,17 +845,21 @@ class adaption_node : public rclcpp::Node {
         }
 
         //------------------------------------------------------------------------------------
-        //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "leg[%d].osc[2].Y[%d]=%f,400",j, num_count, leg[j].osc[2].Y[num_count]);
+        // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
+        // "leg[%d].osc[2].Y[%d]=%f,400",j, num_count,
+        // leg[j].osc[2].Y[num_count]);
         if (leg[j].osc[2].Y[num_count] > 0) {
-          //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "ww=%d", leg[j].ww);
+          // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "ww=%d", leg[j].ww);
           if (leg[j].ww == 1) {
             if (leg[j].no >= 10) {
-              //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "no=%d,adjust success",leg[j].no);
+              // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "no=%d,adjust
+              // success",leg[j].no);
               judge[j] = 1;
               leg[j].no = 0;
               leg[j].ww = 2;
             } else {
-              //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "no=%d,adjust failed",leg[j].no);
+              // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "no=%d,adjust
+              // failed",leg[j].no);
               judge[j] = 2;
               leg[j].ww = 2;
               leg[j].no = 0;
@@ -859,7 +909,8 @@ class adaption_node : public rclcpp::Node {
           //*************************************condition
           // 1*************************************
           if (judge[j] == 1) {  // no need to adjust
-            //RCLCPP_INFO(rclcpp::get_logger("rclcpp"),"no need to adjust\t452\n");
+            // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),"no need to
+            // adjust\t452\n");
             ///*
             if (j == 5) {
               if (number[5] >= 0) {
@@ -894,7 +945,8 @@ class adaption_node : public rclcpp::Node {
           //*************************************condition
           // 2*************************************
           else if (judge[j] == 2) {  // start to adjust
-            //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "need to adjust\t487\n");
+            // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "need to
+            // adjust\t487\n");
             if (leg[j].deep[num_count] * leg[j].lpara +
                     (leg[j].deep[num_count] - leg[j].deep[num_count - 1]) *
                         leg[j].lpara2 >=
@@ -904,21 +956,25 @@ class adaption_node : public rclcpp::Node {
                   (leg[j].deep[num_count] - leg[j].deep[num_count - 1]) *
                       leg[j].lpara2;
               // printf("\ncccccccccccccccccc\nleg[j].out[num_count]=%f\n",leg[j].out[num_count]);
-              RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "leg[%d].out[%d]=%f",j,num_count,leg[j].out[num_count]);
+              RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "leg[%d].out[%d]=%f", j,
+                          num_count, leg[j].out[num_count]);
             } else {
               leg[j].out[num_count] = leg[j].out[num_count - 1];
             }
-            //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "leg[%d].out[%d]=%f",j,num_count,leg[j].out[num_count]);
-            // if(pitch==0 && roll==0){
+            // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
+            // "leg[%d].out[%d]=%f",j,num_count,leg[j].out[num_count]);
+            //  if(pitch==0 && roll==0){
             if (isBalanced) {
               leg[j].out[num_count - 1] = leg[j].ttemp;
               leg[j].out[num_count] = leg[j].out[num_count - 1];
             } /* else if (leg[j].out[num_count] >= 0.6) {
               leg[j].out[num_count] = 0.6;
             } */
-            leg[j].out[num_count] = std::clamp(leg[j].out[num_count], -0.6, 0.6);
-            //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "fin,leg[%d].out[%d]=%f",j,num_count,leg[j].out[num_count]);
-            
+            leg[j].out[num_count] =
+                std::clamp(leg[j].out[num_count], -0.6, 0.6);
+            // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
+            // "fin,leg[%d].out[%d]=%f",j,num_count,leg[j].out[num_count]);
+
             leg[j].height[num_count] = leg[j].out[num_count];
 
             /*
@@ -932,13 +988,13 @@ class adaption_node : public rclcpp::Node {
                 h[j] = ladder[2];
                 leg[j].ttemp = ladder[2];
                 leg[j].clad = 2;
-                change=1;
+                change = 1;
                 printf("1realout[%d]=%lf\t", j, ladder[2]);
               } else {
                 h[j] = leg[j].height[num_count];
                 leg[j].ttemp = leg[j].height[num_count];
                 leg[j].clad = 1;
-                change=1;
+                change = 1;
                 printf("1realout[%d]=%lf\t", j, leg[j].height[num_count]);
               }
             }
@@ -947,18 +1003,18 @@ class adaption_node : public rclcpp::Node {
               if ((leg[j].height[num_count]) > ladder[3]) {
                 h[j] = ladder[3];
                 leg[j].ttemp = ladder[3];
-                if (limit_knee_output){
+                if (limit_knee_output) {
                   leg[j].clad = 2;
-                }else{
+                } else {
                   leg[j].clad = 3;
                 }
-                change=1;
+                change = 1;
                 printf("2realout[%d]=%lf\t", j, ladder[3]);
               } else {
                 h[j] = leg[j].height[num_count];
                 leg[j].ttemp = leg[j].height[num_count];
                 leg[j].clad = 2;
-                change=1;
+                change = 1;
                 printf("2realout[%d]=%lf\t", j, leg[j].height[num_count]);
               }
             }
@@ -968,13 +1024,13 @@ class adaption_node : public rclcpp::Node {
                 h[j] = ladder[4];
                 leg[j].ttemp = ladder[4];
                 leg[j].clad = 4;
-                change=1;
+                change = 1;
                 printf("3realout[%d]=%lf\t", j, ladder[4]);
               } else {
                 h[j] = leg[j].height[num_count];
                 leg[j].ttemp = leg[j].height[num_count];
                 leg[j].clad = 3;
-                change=1;
+                change = 1;
                 printf("3realout[%d]=%lf\t", j, leg[j].height[num_count]);
               }
             }
@@ -984,13 +1040,13 @@ class adaption_node : public rclcpp::Node {
                 h[j] = ladder[5];
                 leg[j].ttemp = ladder[5];
                 leg[j].clad = 5;
-                change=1;
+                change = 1;
                 printf("4realout[%d]=%lf\t", j, ladder[5]);
               } else {
                 h[j] = leg[j].height[num_count];
                 leg[j].ttemp = leg[j].height[num_count];
                 leg[j].clad = 4;
-                change=1;
+                change = 1;
                 printf("4realout[%d]=%lf\t", j, leg[j].height[num_count]);
               }
             }
@@ -1000,20 +1056,20 @@ class adaption_node : public rclcpp::Node {
                 h[j] = ladder[6];
                 leg[j].ttemp = ladder[6];
                 leg[j].clad = 5;
-                change=1;
+                change = 1;
                 printf("5realout[%d]=%lf\t", j, ladder[6]);
               } else {
                 h[j] = leg[j].height[num_count];
                 leg[j].ttemp = leg[j].height[num_count];
                 leg[j].clad = 5;
-                change=1;
+                change = 1;
                 printf("5realout[%d]=%lf\t", j, leg[j].height[num_count]);
               }
             }
-            if(j==5){
-              reduce_by_min_135=1;
-            }else{
-              reduce_by_min_246=1;
+            if (j == 5) {
+              reduce_by_min_135 = 1;
+            } else {
+              reduce_by_min_246 = 1;
             }
             //*/
             kkk[j] = 0;
@@ -1023,7 +1079,8 @@ class adaption_node : public rclcpp::Node {
           //-------------------------------------
           pi[j] = pitch;
           ro[j] = roll;
-          //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "pitch=%f,roll=%f,602",pitch, roll);
+          // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
+          // "pitch=%f,roll=%f,602",pitch, roll);
 
           if (isBalanced) {  // no need to adjust
             leg[j].no++;
@@ -1049,7 +1106,8 @@ class adaption_node : public rclcpp::Node {
 };
 
 int main(int argc, char **argv) {
-  load_cpg();
+  init_cpg();
+  // load_cpg();
   rclcpp::init(argc, argv);
   adaption_node adap;
   auto node = std::make_shared<adaption_node>();
@@ -1061,12 +1119,15 @@ int main(int argc, char **argv) {
 }
 
 const char *base_path = "/home/user/ros2_obf_ws/src/cpg";
-//fixed_cpg
-//knee_high
+// fixed_cpg
+// knee_high
 const char *folder_name = "knee_high_2";  // <-- 修改這裡即可切換資料夾
-char full_path_buf[256];  // 共用緩衝區
+char full_path_buf[256];                  // 共用緩衝區
 
-#define MAKE_PATH(filename) (snprintf(full_path_buf, sizeof(full_path_buf), "%s/%s/%s", base_path, folder_name, filename), full_path_buf)
+#define MAKE_PATH(filename)                                              \
+  (snprintf(full_path_buf, sizeof(full_path_buf), "%s/%s/%s", base_path, \
+            folder_name, filename),                                      \
+   full_path_buf)
 
 void load_cpg(void) {
   FILE *YYout11 = fopen(MAKE_PATH("YYout11.txt"), "r");
@@ -1116,16 +1177,58 @@ void load_cpg(void) {
     fscanf(YYout63, "%lf\n", &(leg[6].osc[3].Y[count]));
   }
 
-  fclose(YYout11); fclose(YYout21); fclose(YYout31);
-  fclose(YYout41); fclose(YYout51); fclose(YYout61);
+  fclose(YYout11);
+  fclose(YYout21);
+  fclose(YYout31);
+  fclose(YYout41);
+  fclose(YYout51);
+  fclose(YYout61);
 
-  fclose(YYout12); fclose(YYout22); fclose(YYout32);
-  fclose(YYout42); fclose(YYout52); fclose(YYout62);
+  fclose(YYout12);
+  fclose(YYout22);
+  fclose(YYout32);
+  fclose(YYout42);
+  fclose(YYout52);
+  fclose(YYout62);
 
-  fclose(YYout13); fclose(YYout23); fclose(YYout33);
-  fclose(YYout43); fclose(YYout53); fclose(YYout63);
+  fclose(YYout13);
+  fclose(YYout23);
+  fclose(YYout33);
+  fclose(YYout43);
+  fclose(YYout53);
+  fclose(YYout63);
 
   turn(_Maxstep);
+}
+void init_cpg() {
+  RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "init_cpg");
+  srand(time(NULL));
+  for (int i = 1; i <= 6; i++) {
+    for (int j = 1; j <= 4; j++) {
+      for (int k = 0; k <= _Maxstep; k++) {
+        leg[i].osc[j].dUe[k] = 0;
+        leg[i].osc[j].Ue[k] = 0;
+        leg[i].osc[j].dUf[k] = 0;
+        leg[i].osc[j].Uf[k] = 0;
+        leg[i].osc[j].dVe[k] = 0;
+        leg[i].osc[j].Ve[k] = 0;
+        leg[i].osc[j].dVf[k] = 0;
+        leg[i].osc[j].Vf[k] = 0;
+        leg[i].osc[j].Ye[k] = 0;
+        leg[i].osc[j].Yf[k] = 0, leg[i].osc[j].Y[k] = 0;
+      }
+    }
+  }
+  for (int i = 1; i <= 6; i++) {
+    for (int j = 1; j <= 4; j++) {
+      leg[i].osc[j].Ue[1] = 0;
+      leg[i].osc[j].Ve[1] = 0;
+      do {
+        leg[i].osc[j].Uf[1] = (double(rand() % 10) / 10 + 0.1);
+        leg[i].osc[j].Vf[1] = (double(rand() % 10) / 10 + 0.1);
+      } while (leg[i].osc[j].Uf[1] == leg[i].osc[j].Vf[1]);
+    }
+  }
 }
 
 void turn(int num_count) {
