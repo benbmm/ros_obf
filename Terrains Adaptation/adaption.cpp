@@ -165,9 +165,9 @@ class adaption_node : public rclcpp::Node {
     fclose(h1);
 
     // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "adapting{%d}", step);
-    // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),"h1: %f\th2: %f\th3: %f\th4:
-    // %f\th5: %f\th6: %f\nchange:%d\n", h[1], h[2],h[3], h[4], h[5],
-    // h[6],change);
+    RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
+                "h1: %f\th2: %f\th3: %f\th4:%f\th5:%f\th6:%f\nchange:%d\n ",
+                h[1], h[2], h[3], h[4], h[5], h[6], change);
     double ctrl_val;
     int clad;
     if (leg[1].osc[2].Y[step] >= 0 || leg[6].osc[2].Y[step] <= 0) {
@@ -319,6 +319,9 @@ class adaption_node : public rclcpp::Node {
     if (fabs(roll) < thres) {
       roll = 0;
     }
+    if (roll == 0 && pitch == 0) {
+      isBalanced = 1;
+    }
 
     for (int i = 1; i <= 6; i++) {
       int a = (i + 1) % 6;
@@ -347,6 +350,7 @@ class adaption_node : public rclcpp::Node {
       double feed = 0;
       if (i == 1) {
         feed = (pitch + roll) * 0.707;
+        // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "feed1=%f", feed);
       } else if (i == 2) {
         feed = roll;
       }
@@ -482,10 +486,13 @@ class adaption_node : public rclcpp::Node {
           leg[i].osc[j].Y[count] =
               leg[i].osc[j].Yf[count] - leg[i].osc[j].Ye[count];
         }
+        leg[i].deep[count] = (leg[i].osc[4].Y[count] - leg[i].osc[2].Y[count]);
         if (i == 1) {
-          FILE *deep1 = fopen("/home/user/ros2_obf_ws/src/deep1.txt", "a");
-          fprintf(deep1, "%f\n", leg[i].deep[count]);
-          fclose(deep1);
+          if (j == 4) {
+            FILE *deep1 = fopen("/home/user/ros2_obf_ws/src/deep1.txt", "a");
+            fprintf(deep1, "%f\n", leg[i].deep[count]);
+            fclose(deep1);
+          }
           if (j == 4) {
             FILE *Y14 = fopen("/home/user/ros2_obf_ws/src/Y14.txt", "a");
             fprintf(Y14, "%f\n", leg[i].osc[j].Y[count]);
