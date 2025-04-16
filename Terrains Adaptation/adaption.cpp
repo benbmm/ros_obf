@@ -55,6 +55,7 @@ int change = 0;
 int reduce_by_min_135 = 0;
 int reduce_by_min_246 = 0;
 double min_abs_val;
+
 const double step_long = 0.2;
 const double Wfe = -1.5;  // Flexor&Extensor weight connection
 const double t1 = 0.5;    // orig = 1
@@ -312,10 +313,10 @@ class adaption_node : public rclcpp::Node {
 
   void cal_out_3_sec(int num_count) {
     int count = num_count;
-    if (fabs(pitch) < 0.03) {
+    if (fabs(pitch) < thres) {
       pitch = 0;
     }
-    if (fabs(roll) < 0.03) {
+    if (fabs(roll) < thres) {
       roll = 0;
     }
 
@@ -370,7 +371,6 @@ class adaption_node : public rclcpp::Node {
       // printf("i = %d\tfeed = %lf\n",i,feed);
       //----------------------------------------calculate
       // feed--------------------------------
-
       for (int j = 1; j <= 4; j++) {
         if (j == 1 || j == 2 || j == 3) {
           int k = (j + 1) % 3;
@@ -404,15 +404,6 @@ class adaption_node : public rclcpp::Node {
           leg[i].osc[j].Ve[count + 1] =
               leg[i].osc[j].Ve[count] + (step_long * leg[i].osc[j].dVe[count]);
 
-          // === Log Extensor outputs ===
-         /*  RCLCPP_INFO(
-              rclcpp::get_logger("rclcpp"),
-              "EXT: i=%d j=%d count=%d | Ue=%.5f dUe=%.5f Ye=%.5f Ve=%.5f", i,
-              j, count, leg[i].osc[j].Ue[count + 1], leg[i].osc[j].dUe[count],
-              leg[i].osc[j].Ye[count + 1], leg[i].osc[j].Ve[count + 1]); */
-
-          //*********************** Flexor neuron *************************
-
           leg[i].osc[j].dUf[count] =
               (-leg[i].osc[j].Uf[count] + (Wfe * leg[i].osc[j].Ye[count]) -
                (b * leg[i].osc[j].Vf[count]) + U0 +
@@ -432,19 +423,11 @@ class adaption_node : public rclcpp::Node {
 
           leg[i].osc[j].Vf[count + 1] =
               leg[i].osc[j].Vf[count] + (step_long * leg[i].osc[j].dVf[count]);
-
-          // === Log Flexor outputs ===
-          /* RCLCPP_INFO(
-              rclcpp::get_logger("rclcpp"),
-              "FLEX: i=%d j=%d count=%d | Uf=%.5f dUf=%.5f Yf=%.5f Vf=%.5f", i,
-              j, count, leg[i].osc[j].Uf[count + 1], leg[i].osc[j].dUf[count],
-              leg[i].osc[j].Yf[count + 1], leg[i].osc[j].Vf[count + 1]); */
           //**********************************Flexor
           // neuron********************************************
 
-          leg[i].osc[j].Y[count] =leg[i].osc[j].Yf[count] - leg[i].osc[j].Ye[count];
-          
-          
+          leg[i].osc[j].Y[count] =
+              leg[i].osc[j].Yf[count] - leg[i].osc[j].Ye[count];
 
         }
 
@@ -499,42 +482,52 @@ class adaption_node : public rclcpp::Node {
           leg[i].osc[j].Y[count] =
               leg[i].osc[j].Yf[count] - leg[i].osc[j].Ye[count];
         }
-        /* RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "leg[%d].osc[%d].Y[%d]=%f", i,
-                    j, count, leg[i].osc[j].Ye[count]); */
-      }
-
-      leg[i].deep[count] = (leg[i].osc[4].Y[count] - leg[i].osc[2].Y[count]);
-      if (i == 1) {
-        FILE *deep1 = fopen("/home/user/ros2_obf_ws/src/deep1.txt", "a");
-        fprintf(deep1, "%f\n", leg[i].deep[count]);
-        fclose(deep1);
+        if (i == 1) {
+          FILE *deep1 = fopen("/home/user/ros2_obf_ws/src/deep1.txt", "a");
+          fprintf(deep1, "%f\n", leg[i].deep[count]);
+          fclose(deep1);
+          if (j == 4) {
+            FILE *Y14 = fopen("/home/user/ros2_obf_ws/src/Y14.txt", "a");
+            fprintf(Y14, "%f\n", leg[i].osc[j].Y[count]);
+            fclose(Y14);
+          }
+          if (j == 2) {
+            FILE *Y12 = fopen("/home/user/ros2_obf_ws/src/Y12.txt", "a");
+            fprintf(Y12, "%f\n", leg[i].osc[2].Y[count]);
+            fclose(Y12);
+          }
+        }
       }
     }
-
-    cal_out_3_walk(count);
+    if (count > 100) {
+      cal_out_3_walk(count);
+    }
   }
   void cal_out_3_walk(int num_count) {
-    for (int i = 0; i <= num_count; ++i) {
-      if (leg[2].osc[3].Y[i] < 0) {
-        leg[2].osc[3].Y[i] = 0;
-      }
-      if (leg[5].osc[3].Y[i] < 0) {
-        leg[5].osc[3].Y[i] = 0;
-      }
-      for (int j = 1; j <= 6; ++j) {
-        if (leg[j].osc[2].Y[i] < 0) {
-          leg[j].osc[2].Y[i] = 0;
-        }
-        if (j <= 3) {
-          leg[j].osc[2].Y[i] = -leg[j].osc[2].Y[i];
-          leg[j].osc[3].Y[i] = -leg[j].osc[3].Y[i];
-        } else {
-          leg[j].osc[1].Y[i] = -leg[j].osc[1].Y[i];
-        }
-      }
-      leg[1].osc[3].Y[i] = -leg[1].osc[3].Y[i];
-      leg[6].osc[3].Y[i] = -leg[6].osc[3].Y[i];
+    if (leg[2].osc[3].Y[num_count] < 0) {
+      leg[2].osc[3].Y[num_count] = 0;
     }
+    if (leg[5].osc[3].Y[num_count] < 0) {
+      leg[5].osc[3].Y[num_count] = 0;
+    }
+    for (int j = 1; j <= 6; ++j) {
+      leg[j].osc[2].Y[num_count] = leg[j].osc[2].Y[num_count] * 1.2;
+      if (leg[j].osc[2].Y[num_count] > 0.7) {
+        leg[j].osc[2].Y[num_count] = 0.7;
+      }
+      if (leg[j].osc[2].Y[num_count] < 0) {
+        leg[j].osc[2].Y[num_count] = 0;
+      }
+      if (j <= 3) {
+        leg[j].osc[2].Y[num_count] = -leg[j].osc[2].Y[num_count];
+        leg[j].osc[3].Y[num_count] = -leg[j].osc[3].Y[num_count];
+      } else {
+        leg[j].osc[1].Y[num_count] = -leg[j].osc[1].Y[num_count];
+      }
+    }
+    leg[1].osc[3].Y[num_count] = -leg[1].osc[3].Y[num_count];
+    leg[6].osc[3].Y[num_count] = -leg[6].osc[3].Y[num_count];
+
     /* for (int i = 1; i < 7; i++) {
       printf("deep[%d]=%f\t",i,leg[i].deep[num_count]);
     }
@@ -1121,7 +1114,7 @@ int main(int argc, char **argv) {
 const char *base_path = "/home/user/ros2_obf_ws/src/cpg";
 // fixed_cpg
 // knee_high
-const char *folder_name = "knee_high_2";  // <-- 修改這裡即可切換資料夾
+const char *folder_name = "knee_high_3";  // <-- 修改這裡即可切換資料夾
 char full_path_buf[256];                  // 共用緩衝區
 
 #define MAKE_PATH(filename)                                              \
@@ -1151,7 +1144,7 @@ void load_cpg(void) {
   FILE *YYout53 = fopen(MAKE_PATH("YYout53.txt"), "r");
   FILE *YYout63 = fopen(MAKE_PATH("YYout63.txt"), "r");
 
-  for (int count = 1; count <= _Maxstep; ++count) {
+  for (int count = 1; count <= _Maxstep; count++) {
     fscanf(YYout11, "%lf\n", &(leg[1].osc[1].Y[count]));
     fscanf(YYout12, "%lf\n", &(leg[1].osc[2].Y[count]));
     fscanf(YYout13, "%lf\n", &(leg[1].osc[3].Y[count]));
@@ -1198,13 +1191,12 @@ void load_cpg(void) {
   fclose(YYout53);
   fclose(YYout63);
 
-  turn(_Maxstep);
+  // turn(_Maxstep);
 }
 void init_cpg() {
   RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "init_cpg");
-  srand(time(NULL));
   for (int i = 1; i <= 6; i++) {
-    for (int j = 1; j <= 4; j++) {
+    for (int j = 1; j <= 3; j++) {
       for (int k = 0; k <= _Maxstep; k++) {
         leg[i].osc[j].dUe[k] = 0;
         leg[i].osc[j].Ue[k] = 0;
@@ -1219,14 +1211,28 @@ void init_cpg() {
       }
     }
   }
+
+  srand(time(NULL));
+  double abc = 0.1;
+  // 給初值，一定要給，每個震盪器初始值都要不同，且同個帳盪器Uf和Vf不能一樣，同隻腳的也不能一樣
+  // 原本是用隨機的，這裡因為要使輸出訊號固定，所以改成直接指定
+  double Uf_values[18] = {0.115, 0.215, 0.315, 0.415, 0.515, 0.615,
+                          0.715, 0.815, 0.915, 1.015, 0.155, 0.255,
+                          0.355, 0.455, 0.555, 0.655, 0.755};
+
+  double Vf_values[18] = {0.9,  0.8,  0.7,  0.6,  0.5,  0.4,  0.3,  0.2,  0.1,
+                          0.85, 0.75, 0.65, 0.55, 0.45, 0.35, 0.25, 0.15, 0.05};
+
+  int index = 0;
+
   for (int i = 1; i <= 6; i++) {
-    for (int j = 1; j <= 4; j++) {
+    for (int j = 1; j <= 3; j++) {
       leg[i].osc[j].Ue[1] = 0;
       leg[i].osc[j].Ve[1] = 0;
-      do {
-        leg[i].osc[j].Uf[1] = (double(rand() % 10) / 10 + 0.1);
-        leg[i].osc[j].Vf[1] = (double(rand() % 10) / 10 + 0.1);
-      } while (leg[i].osc[j].Uf[1] == leg[i].osc[j].Vf[1]);
+
+      leg[i].osc[j].Uf[1] = Uf_values[index];
+      leg[i].osc[j].Vf[1] = Vf_values[index];
+      index++;
     }
   }
 }

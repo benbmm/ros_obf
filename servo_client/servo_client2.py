@@ -112,7 +112,7 @@ def load_cpg():
     #fixed_cpg
     #knee_high
     file_paths = [
-        f"/home/user/ros2_obf_ws/src/cpg/knee_high_2/YYout{i}{j}.txt" for i in range(1, 7) for j in range(1, 4)
+        f"/home/user/ros2_obf_ws/src/cpg/knee_high_3/YYout{i}{j}.txt" for i in range(1, 7) for j in range(1, 4)
     ]
     files = [open(path, "r") for path in file_paths]
 
@@ -242,7 +242,9 @@ class Servo(Node):
         #self.get_logger().info(f'interval: {interval:.4f} (s)')
         self.last_execution_time = current_time
         #self.get_logger().info(f'walk:step={self.step-1}')
-        walk(self.step-1,self.a,self.b)
+        if(self.step>100):
+            walk(self.step-1,self.a,self.b)
+        
 
     def send_request(self):
         #print("send_request\n")
