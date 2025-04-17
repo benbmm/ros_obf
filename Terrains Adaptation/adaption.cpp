@@ -185,8 +185,8 @@ class adaption_node : public rclcpp::Node {
     }
 
     RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
-                "pitch:%f\troll:%f\tchange:%d\nctrl_val:%f\tclad:%d\n", pitch,
-                roll, change, ctrl_val, clad);
+                "pitch:%f\troll:%f\nchange:%d\nctrl_val:%f\tclad:%d\nisBalanced=%d\n", pitch,
+                roll, change, ctrl_val, clad,isBalanced);
   }
   void reduce_by_min_if_nonzero(int set) {
     if (set == 1) {
@@ -315,17 +315,6 @@ class adaption_node : public rclcpp::Node {
 
   void cal_out_3_sec(int num_count) {
     int count = num_count;
-    if (fabs(pitch) < thres) {
-      pitch = 0;
-    }
-    if (fabs(roll) < thres) {
-      roll = 0;
-    }
-    if (roll == 0 && pitch == 0) {
-      isBalanced = 1;
-    }else{
-      isBalanced = 0;
-    }
 
     for (int i = 1; i <= 6; i++) {
       int a = (i + 1) % 6;
@@ -353,6 +342,7 @@ class adaption_node : public rclcpp::Node {
       // feed--------------------------------
       double feed = 0;
       if (i == 1) {
+        isBalanced=1;
         feed = (pitch + roll) * 0.707;
         // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "feed1=%f", feed);
       } else if (i == 2) {
@@ -374,7 +364,9 @@ class adaption_node : public rclcpp::Node {
       else if (i == 6) {
         feed = (pitch - roll) * 0.707;
       }
-
+      if (feed>thres){
+        isBalanced=0;
+      }
       // feed = 0;
       // printf("i = %d\tfeed = %lf\n",i,feed);
       //----------------------------------------calculate
@@ -516,6 +508,7 @@ class adaption_node : public rclcpp::Node {
     }
   }
   void cal_out_3_walk(int num_count) {
+    
     if (leg[2].osc[3].Y[num_count] < 0) {
       leg[2].osc[3].Y[num_count] = 0;
     }
