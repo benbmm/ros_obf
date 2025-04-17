@@ -286,7 +286,7 @@ class Servo(Node):
                     #self.get_logger().info(f"i={i}")
                     #self.get_logger().info(f"leg[{i}].osc[2].Y[{self.step}]={leg[i].osc[2].Y[self.step]}")
                     #print(f"diff={self.h[i]-leg[1].osc[2].Y[self.step]}")
-                    self.get_logger().info(f"self.h[{i}]={self.h[i]}\tstep={self.step}")
+                    #self.get_logger().info(f"self.h[{i}]={self.h[i]}\tstep={self.step}")
                     if (self.h[i] != leg[i].osc[2].Y[self.step]):
                         #self.get_logger().info(f"change,leg[{i}].osc[2].Y[{self.step}]={self.h[i]}")
                         leg[i].osc[2].Y[self.step]=self.h[i]

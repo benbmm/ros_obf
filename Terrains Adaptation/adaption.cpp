@@ -167,9 +167,9 @@ class adaption_node : public rclcpp::Node {
     fclose(h1);
 
     // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "adapting{%d}", step);
-    RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
+    /* RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
                 "h1: %f\th2: %f\th3: %f\th4:%f\th5:%f\th6:%f\nchange:%d\n ",
-                h[1], h[2], h[3], h[4], h[5], h[6], change);
+                h[1], h[2], h[3], h[4], h[5], h[6], change); */
     double ctrl_val;
     int clad;
     if (leg[1].osc[2].Y[step] >= 0 || leg[6].osc[2].Y[step] <= 0) {
@@ -696,8 +696,8 @@ class adaption_node : public rclcpp::Node {
                   leg[j].deep[num_count] * leg[j].lpara +
                   (leg[j].deep[num_count] - leg[j].deep[num_count - 1]) *
                       leg[j].lpara2;
-              RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "leg[%d].out[%d]=%f", j,
-                          num_count, leg[j].out[num_count]);
+              /* RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "leg[%d].out[%d]=%f", j,
+                          num_count, leg[j].out[num_count]); */
             } else {
               leg[j].out[num_count] = leg[j].out[num_count - 1];
             }
