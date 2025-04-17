@@ -47,8 +47,10 @@ int isBalanced;
 double roll, pitch, yaw;
 double e[7];  // 存roll, pitch在六個方向的分量
 double temp = 0, number[7] = {0};
-double kp[7] = {0, -14, -16.25, -14, 14, 16.25, 14};
-double kd[7] = {0, -0.2, -0.2, -0.2, 0.2, 0.2, 0.2};
+/* double kp[7] = {0, -14, -16.25, -14, 14, 16.25, 14};
+double kd[7] = {0, -0.2, -0.2, -0.2, 0.2, 0.2, 0.2}; */
+double kp[7] = {0, 14, 16.25, 14, -14, -16.25, -14};
+double kd[7] = {0, 0.2, 0.2, 0.2, -0.2, -0.2, -0.2};
 double h[7] = {0};
 // 當輸出的膝關節控制量發生變化，則change=1
 int change = 0;
@@ -321,6 +323,8 @@ class adaption_node : public rclcpp::Node {
     }
     if (roll == 0 && pitch == 0) {
       isBalanced = 1;
+    }else{
+      isBalanced = 0;
     }
 
     for (int i = 1; i <= 6; i++) {
@@ -485,8 +489,9 @@ class adaption_node : public rclcpp::Node {
 
           leg[i].osc[j].Y[count] =
               leg[i].osc[j].Yf[count] - leg[i].osc[j].Ye[count];
+          leg[i].deep[count] = (leg[i].osc[4].Y[count] - leg[i].osc[2].Y[count]);
         }
-        leg[i].deep[count] = (leg[i].osc[4].Y[count] - leg[i].osc[2].Y[count]);
+        
         if (i == 1) {
           if (j == 4) {
             FILE *deep1 = fopen("/home/user/ros2_obf_ws/src/deep1.txt", "a");
