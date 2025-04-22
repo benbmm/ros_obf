@@ -26,6 +26,8 @@ void close_log_files();
 // 檔案指標設為全域變數
 FILE *deep1 = NULL;
 FILE *h1 = NULL;
+FILE *pitch_data = NULL;
+FILE *roll_data = NULL;
 
 // 將膝關節的控制值限制在0.3以下
 #define limit_knee_output 0
@@ -47,6 +49,7 @@ double thres = 0.03;
 int isBalanced;
 
 double roll, pitch, yaw;
+double roll_temp, pitch_temp, yaw_temp;
 double e[7];  // 存roll, pitch在六個方向的分量
 double temp = 0, number[7] = {0};
 double kp[7] = {0, -14, -16.25, -14, 14, 16.25, 14};
@@ -104,16 +107,9 @@ class adaption_node : public rclcpp::Node {
     // 將四元數轉換為旋轉矩陣
     tf2::Matrix3x3 m(q);
     // 转欧拉角
-    m.getRPY(pitch, roll, yaw);
+    m.getRPY(pitch_temp, roll_temp, yaw_temp);
 
-    FILE *pitch_data = fopen("/home/user/ros2_obf_ws/src/pitch_data.txt", "a");
-    FILE *roll_data = fopen("/home/user/ros2_obf_ws/src/roll_data.txt", "a");
-    fprintf(pitch_data, "%f\n", roll);
-    fprintf(roll_data, "%f\n", pitch);
-    fclose(pitch_data);
-    fclose(roll_data);
-
-    roll = -roll;
+    roll_temp = -roll_temp;
     // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Roll: %f, Pitch: %f, Yaw:
     // %f",roll, pitch, yaw);
 
@@ -132,6 +128,11 @@ class adaption_node : public rclcpp::Node {
       const std::shared_ptr<interfaces::srv::CommandAdaption::Request> request,
       std::shared_ptr<interfaces::srv::CommandAdaption::Response> response) {
     int step = request->step;
+    
+    roll=roll_temp;
+    pitch=pitch_temp;
+    fprintf(pitch_data, "%f\n", roll);
+    fprintf(roll_data, "%f\n", pitch);
 
     initialization();
     deep(step);
@@ -980,18 +981,30 @@ void turn(int num_count) {
 }
 
 void open_log_files() {
-  deep1 = fopen("/home/user/ros2_obf_ws/src/deep1.txt", "a");
+  pitch_data = fopen("/home/user/ros2_obf_ws/src/sensor_data/pitch_data.txt", "a");
+  if (!pitch_data) {
+    perror("Failed to open log files:pitch_data.txt");
+  }
+
+  roll_data = fopen("/home/user/ros2_obf_ws/src/sensor_data/roll_data.txt", "a");
+  if (!pitch_data) {
+    perror("Failed to open log files:roll_data.txt");
+  }
+
+  deep1 = fopen("/home/user/ros2_obf_ws/src/sensor_data/deep1.txt", "a");
   if (!deep1) {
     perror("Failed to open log files:deep1.txt");
   }
 
-  h1 = fopen("/home/user/ros2_obf_ws/src/h1.txt", "a");
+  h1 = fopen("/home/user/ros2_obf_ws/src/sensor_data/h1.txt", "a");
   if (!h1) {
     perror("Failed to open log files:h1.txt");
   }
 }
 
 void close_log_files() {
+  if (pitch_data) fclose(pitch_data);
+  if (roll_data) fclose(roll_data);
   if (deep1) fclose(deep1);
   if (h1) fclose(h1);
 }
