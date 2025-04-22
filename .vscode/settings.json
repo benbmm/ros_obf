@@ -14,6 +14,7 @@
         "xutility": "cpp",
         "ios": "cpp",
         "iostream": "cpp",
-        "fstream": "cpp"
+        "fstream": "cpp",
+        "istream": "cpp"
     }
 }

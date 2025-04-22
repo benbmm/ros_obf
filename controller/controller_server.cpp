@@ -531,26 +531,32 @@ class controller : public rclcpp::Node {
     printf("right_min===%f\n", right_min);
     printf("stright_min=%f\n", stright_min);
 
-    FILE *read, *wall_distance;
+    FILE *S1,*S2,*S3,*S4, *wall_distance;
     // 存雷達的四個最小值
-    read = fopen("/home/user/ros2_obf_ws/src/read.txt", "a");
+    S1 = fopen("/home/user/ros2_obf_ws/src/sensor_data/S1.txt", "a");
+    S2 = fopen("/home/user/ros2_obf_ws/src/sensor_data/S2.txt", "a");
+    S3 = fopen("/home/user/ros2_obf_ws/src/sensor_data/S3.txt", "a");
+    S4 = fopen("/home/user/ros2_obf_ws/src/sensor_data/S4.txt", "a");
     // 存與牆距離
-    wall_distance = fopen("/home/user/ros2_obf_ws/src/wall_distance.txt", "a");
-    fprintf(read, "%f\n", read_1);
-    fprintf(read, "%f\n", read_2);
-    fprintf(read, "%f\n", read_3);
-    fprintf(read, "%f\n", read_4);
-    double min_read = read_1;
+    wall_distance = fopen("/home/user/ros2_obf_ws/src/sensor_data/wall_distance.txt", "a");
+    fprintf(S1, "%f\n", read_1);
+    fprintf(S2, "%f\n", read_2);
+    fprintf(S3, "%f\n", read_3);
+    fprintf(S4, "%f\n", read_4);
+    /* double min_read = read_1;
     if (min_read > read_2) {
       min_read = read_2;
     } else if (min_read > read_3) {
       min_read = read_3;
     } else if (min_read > read_4) {
       min_read = read_4;
-    }
-    fprintf(wall_distance, "%f\n", min_read);
-    distances_sum += min_read;
-    fclose(read);
+    } */
+    fprintf(wall_distance, "%f\n", S1);
+    distances_sum += S1;
+    fclose(S1);
+    fclose(S2);
+    fclose(S3);
+    fclose(S4);
     fclose(wall_distance);
   }
   ///////////////////////////////////  Save sensor data to another vector &
@@ -571,7 +577,7 @@ class controller : public rclcpp::Node {
     printf("in[3] === %f\n", in[3]);
     printf("in[4] === %f\n", in[4]); */
     FILE *input;
-    input = fopen("/home/user/ros2_obf_ws/src/input.txt", "a");
+    input = fopen("/home/user/ros2_obf_ws/src/sensor_data/input.txt", "a");
     fprintf(input, "%f\n", in[1]);
     fprintf(input, "%f\n", in[2]);
     fprintf(input, "%f\n", in[3]);
@@ -675,7 +681,7 @@ class controller : public rclcpp::Node {
   void save_Average_distance() {
     FILE *Average_distance;
     Average_distance =
-        fopen("/home/user/ros2_obf_ws/src/Average_distance.txt",
+        fopen("/home/user/ros2_obf_ws/src/sensor_data/Average_distance.txt",
               "a");  //"controller/20210701/save_ave_dis_error.txt"
     if (Average_distance == NULL) {
       printf("Fail to open file");
