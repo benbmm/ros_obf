@@ -552,7 +552,7 @@ class controller : public rclcpp::Node {
       min_read = read_4;
     } */
     fprintf(wall_distance, "%f\n", S1);
-    distances_sum += S1;
+    distances_sum += read_1;
     fclose(S1);
     fclose(S2);
     fclose(S3);
