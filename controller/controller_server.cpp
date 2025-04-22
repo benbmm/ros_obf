@@ -36,11 +36,11 @@ int adaption_mode_in_clu;
 #define max_speed 50.0
 //////////////////////////////  define區
 ////////////////////////////////////////////
-#define normal_mode_clu "/home/user/ros2_obf_ws/src/controller_server/new_rule_s.txt"
+#define normal_mode_clu "/home/user/ros2_obf_ws/src/controller_server/rule_s_dis05.txt"
 #define adaption_mode_clu "/home/user/ros2_obf_ws/src/controller_server/rule_s.txt"// 紀錄rule數量的文件
 //#define load_data_clu "/home/user/ros2_obf_ws/src/controller_server/new_close_rule_w.txt"
 
-#define normal_mode_FC "/home/user/ros2_obf_ws/src/controller_server/new_s.txt"
+#define normal_mode_FC "/home/user/ros2_obf_ws/src/controller_server/s_dis05.txt"
 #define adaption_mode_FC "/home/user/ros2_obf_ws/src/controller_server/s.txt"// 紀錄FC參數的文件
 //#define load_data_FC  "/home/user/ros2_obf_ws/src/controller_server/new_close_w.txt"
 
@@ -110,6 +110,7 @@ int too_close_right = 0;
 int counts_left = 0, counts_right = 0;
 
 int change=0;
+int if_control=0;
 
 double distances_sum;
 
@@ -220,38 +221,49 @@ class controller : public rclcpp::Node {
       std::shared_ptr<interfaces::srv::Command::Response> response) {
     //printf("sssssssssssssssssssssssssssssssssssssssssss");
     change=request->get;
-    counts++;
+    if_control=request->if_control;
+    
     //RCLCPP_INFO(this->get_logger(), "Incoming request");
-    test_open();  // to get max and min
-    decision_(counts);
-    if (!too_close_right || !too_close_left) {
+    
+    if(if_control==0){
+      //只是要存雷達數據
+      test_open();  // to get max and min
+      decision_(counts);
       get_sensor(counts);
       sick_limit(counts);
-      fuzzy_in(counts);  // 輸入是雷測數值，只是調整fuzzy的input比例
-      if (!change){
-        Fir_str(in, _in_clu, ber);  // 讀取後件部計算機發量
-        fuzzy(_in_clu, ber);        // 解模糊產生out_y
-      }else{
-        Fir_str(in, adaption_mode_in_clu, ber);  // 讀取後件部計算機發量
-        fuzzy(adaption_mode_in_clu, ber);        // 解模糊產生out_y
+    }else{
+      counts++;
+      test_open();  // to get max and min
+      decision_(counts);
+      if (!too_close_right || !too_close_left) {
+        get_sensor(counts);
+        sick_limit(counts);
+        fuzzy_in(counts);  // 輸入是雷測數值，只是調整fuzzy的input比例
+        if (!change){
+          Fir_str(in, _in_clu, ber);  // 讀取後件部計算機發量
+          fuzzy(_in_clu, ber);        // 解模糊產生out_y
+        }else{
+          Fir_str(in, adaption_mode_in_clu, ber);  // 讀取後件部計算機發量
+          fuzzy(adaption_mode_in_clu, ber);        // 解模糊產生out_y
+        }
+        
       }
-      
+      if (too_close_right) {
+        response->a = 2;
+        response->b = -2;
+      } else if (too_close_left) {
+        response->a = -2;
+        response->b = 2;
+      } else if (decision_left == 1) {
+        response->a = out_y[1];
+        response->b = out_y[2];
+      } else if (decision_right == 1) {
+        response->a = out_y[2];
+        response->b = out_y[1];
+      }
+      //printf("left=%d\t right=%d\n", decision_left, decision_right);
+      //printf("a=%lf \t b=%lf \n", out_y[1], out_y[2]);
     }
-    if (too_close_right) {
-      response->a = 2;
-      response->b = -2;
-    } else if (too_close_left) {
-      response->a = -2;
-      response->b = 2;
-    } else if (decision_left == 1) {
-      response->a = out_y[1];
-      response->b = out_y[2];
-    } else if (decision_right == 1) {
-      response->a = out_y[2];
-      response->b = out_y[1];
-    }
-    //printf("left=%d\t right=%d\n", decision_left, decision_right);
-    //printf("a=%lf \t b=%lf \n", out_y[1], out_y[2]);
   }
 
   void decision_(int j) {
@@ -551,7 +563,7 @@ class controller : public rclcpp::Node {
     } else if (min_read > read_4) {
       min_read = read_4;
     } */
-    fprintf(wall_distance, "%f\n", S1);
+    fprintf(wall_distance, "%f\n", read_1);
     distances_sum += read_1;
     fclose(S1);
     fclose(S2);

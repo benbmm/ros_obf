@@ -173,8 +173,8 @@ class adaption_node : public rclcpp::Node {
     }
 
     RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
-                "pitch:%f\troll:%f\tchange:%d\nctrl_val:%f\tclad:%d\n", pitch,
-                roll, change, ctrl_val, clad);
+                "pitch:%f\troll:%f\tchange:%d\nctrl_val:%f\tclad:%d\nstep=%d\n", pitch,
+                roll, change, ctrl_val, clad,step);
   }
   void reduce_by_min_if_nonzero(int set) {
     if (set == 1) {

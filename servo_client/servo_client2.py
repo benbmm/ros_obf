@@ -39,12 +39,12 @@ NUM_SERVOS = 18
 _count = 1000
 
 #是否開啟適應地形
-adaption_mode=1
+adaption_mode=0
 #change是指在兩種模式切換:適應地形的時候踝關節固定，適應完則開啟踝關節，在controller node 中模糊控制器參數也會隨之切換
 #當change_mode=1 代表change值會隨著adaption node回傳值變化。=0時則始終不變，因此不會切換控制器，踝關節也維持固定角度
 change_mode=0
 #當adaption node偵測到姿態變化，回傳chang=1，servo node傳給controller node
-change=1
+change=0
 
 class OSC:
     def __init__(self):
@@ -85,8 +85,8 @@ def walk(x, a, b):
         a=0.5
         b=-0.5
     print(f"c={c}\td={d}\n")
-    a=0
-    b=0
+    #a=0
+    #b=0
     #print(f"e={e}\n")
     servos["R00"].angle=(cpg_deg_change(leg[1].osc[1].Y[x] * a))
     servos["R01"].angle=(cpg_deg_change(leg[1].osc[2].Y[x] * c)+e)
@@ -225,16 +225,17 @@ class Servo(Node):
         #存適應地形膝關節角度
         self.h = [0] * 8 
         self.max_step = Maxstep  # 保存 Maxstep
+        self.count_controller_server=0
     def callback(self):
         self.step+=1
         #print(f"step:{self.step}\n")
         #self.get_logger().info(f'send_reques:step={self.step}')
         if(adaption_mode):
             self.send_request_adaption()
-        if ((leg[1].osc[1].Y[self.step - 1] <= 0 and leg[1].osc[1].Y[self.step] > 0) or
-            (leg[1].osc[1].Y[self.step - 1] >= 0 and leg[1].osc[1].Y[self.step] < 0)):
+        future = self.send_request() #發送reduest
+        
             #print("fuzzy-----------------------------------------------------\n")
-            future = self.send_request() #發送reduest
+            
         
 
         current_time = time.time()
@@ -248,9 +249,16 @@ class Servo(Node):
 
     def send_request(self):
         #print("send_request\n")
-        self.req.get=change
-        self.future = self.cli.call_async(self.req)
-        self.future.add_done_callback(self.handle_response)
+        if ((leg[1].osc[1].Y[self.step - 1] <= 0 and leg[1].osc[1].Y[self.step] > 0) or
+            (leg[1].osc[1].Y[self.step - 1] >= 0 and leg[1].osc[1].Y[self.step] < 0)):
+            self.req.if_control=1
+            self.req.get=change
+            self.future = self.cli.call_async(self.req)
+            self.future.add_done_callback(self.handle_response)
+        else:
+            self.req.if_control=0
+            self.req.get=change
+            self.cli.call_async(self.req)
     def handle_response(self, future):
         try:
             response = future.result()

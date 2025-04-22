@@ -15,6 +15,10 @@
         "ios": "cpp",
         "iostream": "cpp",
         "fstream": "cpp",
-        "istream": "cpp"
+        "istream": "cpp",
+        "xlocmes": "cpp",
+        "xlocmon": "cpp",
+        "xlocnum": "cpp",
+        "xloctime": "cpp"
     }
 }
