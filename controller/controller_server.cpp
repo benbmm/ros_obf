@@ -110,11 +110,25 @@ int too_close_right = 0;
 int counts_left = 0, counts_right = 0;
 
 int change=0;
-int if_control=0;
+int if_control;
 
 double distances_sum;
 
+int laser_is_open=0;
+
+// === 需要多次使用的FILE使用全域變數 ===
+FILE *S1 = NULL;
+FILE *S2 = NULL;
+FILE *S3 = NULL;
+FILE *S4 = NULL;
+FILE *wall_distance = NULL;
+FILE *input = NULL;
+
 using namespace std;
+
+void open_files();
+void close_files();
+
 inline float phi(float x, float m, float v) {
   return (exp(-(x - m) * (x - m) / (v * v)));
 }
@@ -169,6 +183,7 @@ class controller : public rclcpp::Node {
     service_ = this->create_service<interfaces::srv::Command>(
         "command", std::bind(&controller::Service_callback, this,
                              std::placeholders::_1, std::placeholders::_2));
+    test_open();  // to get max and min
   }
   double minimun(int i, int j, int &k) {
     double laser_min = 100;
@@ -182,6 +197,10 @@ class controller : public rclcpp::Node {
   void callback(const sensor_msgs::msg::LaserScan::SharedPtr scan) {
     //RCLCPP_INFO(this->get_logger(), "Received LaserScan message: %zu ranges",scan->ranges.size());
     int k;
+    if (laser_is_open==0){
+      RCLCPP_INFO(this->get_logger(), "open laser");
+      laser_is_open=1;
+    }
     for (int i = 1; i <= scan->ranges.size();
          i++)  // ranges有720筆資料，每0.5度一筆
     {
@@ -220,49 +239,61 @@ class controller : public rclcpp::Node {
       const std::shared_ptr<interfaces::srv::Command::Request> request,
       std::shared_ptr<interfaces::srv::Command::Response> response) {
     //printf("sssssssssssssssssssssssssssssssssssssssssss");
+    //RCLCPP_INFO(this->get_logger(), "Service called, change=%d, if_control=%d", request->get, request->if_control);
     change=request->get;
     if_control=request->if_control;
     
     //RCLCPP_INFO(this->get_logger(), "Incoming request");
-    
-    if(if_control==0){
-      //只是要存雷達數據
-      test_open();  // to get max and min
-      decision_(counts);
-      get_sensor(counts);
-      sick_limit(counts);
-    }else{
-      counts++;
-      test_open();  // to get max and min
-      decision_(counts);
-      if (!too_close_right || !too_close_left) {
+    if (laser_is_open==1){
+      if(if_control==0){
+        //只是要存雷達數據
+        
+        decision_(counts);
         get_sensor(counts);
         sick_limit(counts);
-        fuzzy_in(counts);  // 輸入是雷測數值，只是調整fuzzy的input比例
-        if (!change){
-          Fir_str(in, _in_clu, ber);  // 讀取後件部計算機發量
-          fuzzy(_in_clu, ber);        // 解模糊產生out_y
-        }else{
-          Fir_str(in, adaption_mode_in_clu, ber);  // 讀取後件部計算機發量
-          fuzzy(adaption_mode_in_clu, ber);        // 解模糊產生out_y
+        response->a = 666;
+        response->b = 666;
+      }else{
+        counts++;
+        decision_(counts);
+        distances_sum += read_1;
+        //RCLCPP_INFO(this->get_logger(), "counts=%d",counts);
+        if (!too_close_right && !too_close_left) {
+          get_sensor(counts);
+          sick_limit(counts);
+          fuzzy_in(counts);  // 輸入是雷測數值，只是調整fuzzy的input比例
+          if (!change){
+            Fir_str(in, _in_clu, ber);  // 讀取後件部計算機發量
+            fuzzy(_in_clu, ber);        // 解模糊產生out_y
+          }else{
+            Fir_str(in, adaption_mode_in_clu, ber);  // 讀取後件部計算機發量
+            fuzzy(adaption_mode_in_clu, ber);        // 解模糊產生out_y
+          }
+          
         }
-        
+        if (too_close_right) {
+          response->a = 2;
+          response->b = -2;
+        } else if (too_close_left) {
+          response->a = -2;
+          response->b = 2;
+        } else if (decision_left == 1) {
+          response->a = out_y[1];
+          response->b = out_y[2];
+        } else if (decision_right == 1) {
+          response->a = out_y[2];
+          response->b = out_y[1];
+        }else{
+          response->a = 666;
+          response->b = 666;
+        }
+        //printf("left=%d\t right=%d\n", decision_left, decision_right);
+        //printf("a=%lf \t b=%lf \n", out_y[1], out_y[2]);
       }
-      if (too_close_right) {
-        response->a = 2;
-        response->b = -2;
-      } else if (too_close_left) {
-        response->a = -2;
-        response->b = 2;
-      } else if (decision_left == 1) {
-        response->a = out_y[1];
-        response->b = out_y[2];
-      } else if (decision_right == 1) {
-        response->a = out_y[2];
-        response->b = out_y[1];
-      }
-      //printf("left=%d\t right=%d\n", decision_left, decision_right);
-      //printf("a=%lf \t b=%lf \n", out_y[1], out_y[2]);
+    }else{
+      RCLCPP_INFO(this->get_logger(), "wait laser");
+      response->a = 666;
+      response->b = 666;
     }
   }
 
@@ -283,6 +314,9 @@ class controller : public rclcpp::Node {
       decision_left = 0;
       decision_right = 1;
     }
+    //目前不原地旋轉
+    too_close_left = 0;
+    too_close_right = 0;
     // 目前都用右沿牆
     decision_left = 0;
     decision_right = 1;
@@ -406,6 +440,8 @@ class controller : public rclcpp::Node {
       ////-1~1之間的中心點範圍
       // max_m[ber][ssss]=0.0;
       // //為了找最大值，所以初始的最大值令為-1，即為"最小"的最大值。
+      adaption_mode_min_m[ssss] = 1.0e10;  // Max value for finding minimum
+      adaption_mode_max_m[ssss] = 1.0e-10; // Min value for finding maximum
     }
 
     
@@ -465,11 +501,12 @@ class controller : public rclcpp::Node {
         if (adaption_mode_fuzzy_real[(jj - 1) * _mem_length + jjj * 2 - 1] < adaption_mode_min_m[jjj]) {
           adaption_mode_min_m[jjj] = adaption_mode_fuzzy_real[(jj - 1) * _mem_length + jjj * 2 - 1];
         }
-        if (fuzzy_real[(jj - 1) * _mem_length + jjj * 2 - 1] > adaption_mode_max_m[jjj]) {
+        if (adaption_mode_fuzzy_real[(jj - 1) * _mem_length + jjj * 2 - 1] > adaption_mode_max_m[jjj]) {
           adaption_mode_max_m[jjj] = adaption_mode_fuzzy_real[(jj - 1) * _mem_length + jjj * 2 - 1];
         }
       }
     }
+    RCLCPP_INFO(this->get_logger(), "Finished processing adaption_mode arrays");
   }
   ///////////////////////////////////  Open the file from leaning
   //////////////////////////////////
@@ -543,14 +580,6 @@ class controller : public rclcpp::Node {
     printf("right_min===%f\n", right_min);
     printf("stright_min=%f\n", stright_min);
 
-    FILE *S1,*S2,*S3,*S4, *wall_distance;
-    // 存雷達的四個最小值
-    S1 = fopen("/home/user/ros2_obf_ws/src/sensor_data/S1.txt", "a");
-    S2 = fopen("/home/user/ros2_obf_ws/src/sensor_data/S2.txt", "a");
-    S3 = fopen("/home/user/ros2_obf_ws/src/sensor_data/S3.txt", "a");
-    S4 = fopen("/home/user/ros2_obf_ws/src/sensor_data/S4.txt", "a");
-    // 存與牆距離
-    wall_distance = fopen("/home/user/ros2_obf_ws/src/sensor_data/wall_distance.txt", "a");
     fprintf(S1, "%f\n", read_1);
     fprintf(S2, "%f\n", read_2);
     fprintf(S3, "%f\n", read_3);
@@ -564,12 +593,6 @@ class controller : public rclcpp::Node {
       min_read = read_4;
     } */
     fprintf(wall_distance, "%f\n", read_1);
-    distances_sum += read_1;
-    fclose(S1);
-    fclose(S2);
-    fclose(S3);
-    fclose(S4);
-    fclose(wall_distance);
   }
   ///////////////////////////////////  Save sensor data to another vector &
   ///print out  ///////////////////////////
@@ -588,13 +611,10 @@ class controller : public rclcpp::Node {
     printf("in[2] === %f\n", in[2]);
     printf("in[3] === %f\n", in[3]);
     printf("in[4] === %f\n", in[4]); */
-    FILE *input;
-    input = fopen("/home/user/ros2_obf_ws/src/sensor_data/input.txt", "a");
     fprintf(input, "%f\n", in[1]);
     fprintf(input, "%f\n", in[2]);
     fprintf(input, "%f\n", in[3]);
     fprintf(input, "%f\n", in[4]);
-    fclose(input);
 
     //		in[5] = sick_wall[jj] * _input_scale
     //;//平移再normalize//2017_8_2
@@ -710,6 +730,7 @@ class controller : public rclcpp::Node {
 };
 
 int main(int argc, char **argv) {
+  open_files();
   rclcpp::init(argc, argv);
   controller ctrl;
   auto node = std::make_shared<controller>();
@@ -718,6 +739,38 @@ int main(int argc, char **argv) {
 
   node->stop();
   rclcpp::shutdown();
+  close_files();
 
   return 0;
+}
+// === 開啟檔案函式 ===
+void open_files() {
+  S1 = fopen("/home/user/ros2_obf_ws/src/sensor_data/S1.txt", "a");
+  S2 = fopen("/home/user/ros2_obf_ws/src/sensor_data/S2.txt", "a");
+  S3 = fopen("/home/user/ros2_obf_ws/src/sensor_data/S3.txt", "a");
+  S4 = fopen("/home/user/ros2_obf_ws/src/sensor_data/S4.txt", "a");
+  wall_distance = fopen("/home/user/ros2_obf_ws/src/sensor_data/wall_distance.txt", "a");
+  input = fopen("/home/user/ros2_obf_ws/src/sensor_data/input.txt", "r");  // 假設 input 是讀取檔案
+
+  if (!S1 || !S2 || !S3 || !S4 || !wall_distance || !input) {
+      printf("Error: Failed to open one or more files.\n");
+      // 這裡可依需求處理錯誤，例如結束程式或重試
+  }
+}
+
+// === 關閉檔案函式 ===
+void close_files() {
+  if (S1) fclose(S1);
+  if (S2) fclose(S2);
+  if (S3) fclose(S3);
+  if (S4) fclose(S4);
+  if (wall_distance) fclose(wall_distance);
+  if (input) fclose(input);
+
+  S1 = NULL;
+  S2 = NULL;
+  S3 = NULL;
+  S4 = NULL;
+  wall_distance = NULL;
+  input = NULL;
 }

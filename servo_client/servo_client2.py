@@ -112,7 +112,7 @@ def load_cpg():
     #fixed_cpg
     #knee_high
     file_paths = [
-        f"/home/user/ros2_obf_ws/src/cpg/knee_high_3/YYout{i}{j}.txt" for i in range(1, 7) for j in range(1, 4)
+        f"/home/user/ros2_obf_ws/src/cpg/fixed_cpg/YYout{i}{j}.txt" for i in range(1, 7) for j in range(1, 4)
     ]
     files = [open(path, "r") for path in file_paths]
 
@@ -159,12 +159,12 @@ def turn(num_count):
             leg[6].osc[3].Y[i] = 0 """
         for j in range(1,7):
             #########
-            if j==1 or j==6:
+            """ if j==1 or j==6:
                 if leg[j].osc[3].Y[i] > 0:
                     leg[j].osc[3].Y[i] = 0
             else:
                 if leg[j].osc[3].Y[i] < 0:
-                    leg[j].osc[3].Y[i] = 0
+                    leg[j].osc[3].Y[i] = 0 """
             #########
             if leg[j].osc[2].Y[i] < 0:
                 leg[j].osc[2].Y[i] = 0
@@ -213,6 +213,7 @@ class Servo(Node):
             self.cli_adaption = self.create_client(CommandAdaption, 'commandadaption')
             while not self.cli_adaption.wait_for_service(timeout_sec=0.05):
                 self.get_logger().info('adaption_service not available, waiting again...')
+
         self.req = Command.Request()
         self.req_adaption = CommandAdaption.Request()
         timer_period = 0.02
@@ -232,7 +233,8 @@ class Servo(Node):
         #self.get_logger().info(f'send_reques:step={self.step}')
         if(adaption_mode):
             self.send_request_adaption()
-        future = self.send_request() #發送reduest
+
+        self.send_request() #發送reduest
         
             #print("fuzzy-----------------------------------------------------\n")
             
@@ -258,12 +260,15 @@ class Servo(Node):
         else:
             self.req.if_control=0
             self.req.get=change
-            self.cli.call_async(self.req)
+            _=self.cli.call_async(self.req)
     def handle_response(self, future):
         try:
             response = future.result()
-            self.a=response.a
-            self.b=response.b
+            if (response.a != 666 and response.b != 666):
+                self.a=response.a
+                self.b=response.b
+            self.get_logger().info(f"a={self.a},a={self.b}")
+            
         except Exception as e:
             self.get_logger().error(f'Service call failed: {e}')
     
@@ -288,7 +293,7 @@ class Servo(Node):
             if (change_mode):
                 global change
                 change = response_adaptio.change
-            #self.get_logger().info(f'h1: {response_adaptio.h1}\th2: {response_adaptio.h2}\th3: {response_adaptio.h3}\th4: {response_adaptio.h4}\th5: {response_adaptio.h5}\th6: {response_adaptio.h6}\nchange:{change}\tstep:{self.step}\n')
+            self.get_logger().info(f'h1: {response_adaptio.h1}\th2: {response_adaptio.h2}\th3: {response_adaptio.h3}\th4: {response_adaptio.h4}\th5: {response_adaptio.h5}\th6: {response_adaptio.h6}\nchange:{change}\tstep:{self.step}\n')
             if (self.step>0):
                 for i in range(1,7):
                     #self.get_logger().info(f"i={i}")
