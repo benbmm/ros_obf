@@ -85,8 +85,8 @@ def walk(x, a, b):
         a=0.5
         b=-0.5
     print(f"c={c}\td={d}\n")
-    #a=0
-    #b=0
+    #a=1
+    #b=1
     #print(f"e={e}\n")
     servos["R00"].angle=(cpg_deg_change(leg[1].osc[1].Y[x] * a))
     servos["R01"].angle=(cpg_deg_change(leg[1].osc[2].Y[x] * c)+e)
@@ -149,11 +149,11 @@ def turn(num_count):
         temp=leg[2].osc[3].Y[i]
         leg[2].osc[3].Y[i]=leg[5].osc[3].Y[i]
         leg[5].osc[3].Y[i]=temp
-        """ if leg[2].osc[3].Y[i] < 0:
+        if leg[2].osc[3].Y[i] < 0:
             leg[2].osc[3].Y[i] = 0
         if leg[5].osc[3].Y[i] < 0:
             leg[5].osc[3].Y[i] = 0
-        if leg[1].osc[3].Y[i] > 0:
+        """ if leg[1].osc[3].Y[i] > 0:
             leg[1].osc[3].Y[i] = 0
         if leg[6].osc[3].Y[i] > 0:
             leg[6].osc[3].Y[i] = 0 """
@@ -267,7 +267,7 @@ class Servo(Node):
             if (response.a != 666 and response.b != 666):
                 self.a=response.a
                 self.b=response.b
-            self.get_logger().info(f"a={self.a},a={self.b}")
+            self.get_logger().info(f"a={self.a},a={self.b},step={self.step}")
             
         except Exception as e:
             self.get_logger().error(f'Service call failed: {e}')

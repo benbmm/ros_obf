@@ -750,7 +750,7 @@ void open_files() {
   S3 = fopen("/home/user/ros2_obf_ws/src/sensor_data/S3.txt", "a");
   S4 = fopen("/home/user/ros2_obf_ws/src/sensor_data/S4.txt", "a");
   wall_distance = fopen("/home/user/ros2_obf_ws/src/sensor_data/wall_distance.txt", "a");
-  input = fopen("/home/user/ros2_obf_ws/src/sensor_data/input.txt", "r");  // 假設 input 是讀取檔案
+  input = fopen("/home/user/ros2_obf_ws/src/sensor_data/input.txt", "a");  // 假設 input 是讀取檔案
 
   if (!S1 || !S2 || !S3 || !S4 || !wall_distance || !input) {
       printf("Error: Failed to open one or more files.\n");
