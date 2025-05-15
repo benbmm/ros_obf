@@ -85,8 +85,8 @@ def walk(x, a, b):
         a=0.5
         b=-0.5
     print(f"c={c}\td={d}\n")
-    #a=0
-    #b=0
+    a=1
+    b=1
     #print(f"e={e}\n")
     servos["R00"].angle=(cpg_deg_change(leg[1].osc[1].Y[x] * a))
     servos["R01"].angle=(cpg_deg_change(leg[1].osc[2].Y[x] * c)+e)
@@ -136,52 +136,45 @@ def cpg_deg_change(rad):
     return deg+90
 
 def turn(num_count):
-    #leg[2,5]的osc[3]交換
-    #控制膝關節永遠>=90度
-    #控制leg[2,5]的osc[3]>=90度
-    #leg[1,2,3]的osc[2]*-1
-    #leg[4,5,6]的osc[1]*-1
-    #leg[1,2,3]的osc[3]*-1
+
+    #前後左右方位相關
     #leg[1,6]的osc[3]*-1
+    #leg[2,5]的osc[3]*-1
+
+    #改變姿勢相關
+    #leg[1~6]的osc[2]>=90度
+    #leg[2,5]的osc[3]>=90度
+
+    #馬達轉動方向相關
+    #leg[1,2,3]osc[2]*-1
+    #leg[1,2,3]的osc[3]*-1
+    #leg[4,5,6]的osc[1]*-1
     
     for i in range(num_count + 1):
+        #前後左右方位相關
+        leg[1].osc[3].Y[i]=-leg[1].osc[3].Y[i]
+        leg[6].osc[3].Y[i]=-leg[6].osc[3].Y[i]
 
-        temp=leg[2].osc[3].Y[i]
-        leg[2].osc[3].Y[i]=leg[5].osc[3].Y[i]
-        leg[5].osc[3].Y[i]=temp
+        leg[2].osc[3].Y[i]=-leg[2].osc[3].Y[i]
+        leg[5].osc[3].Y[i]=-leg[5].osc[3].Y[i]
+
+        #改變姿勢相關
         if leg[2].osc[3].Y[i] < 0:
             leg[2].osc[3].Y[i] = 0
         if leg[5].osc[3].Y[i] < 0:
             leg[5].osc[3].Y[i] = 0
-        """ if leg[1].osc[3].Y[i] > 0:
-            leg[1].osc[3].Y[i] = 0
-        if leg[6].osc[3].Y[i] > 0:
-            leg[6].osc[3].Y[i] = 0 """
+
         for j in range(1,7):
-            #########
-            """ if j==1 or j==6:
-                if leg[j].osc[3].Y[i] > 0:
-                    leg[j].osc[3].Y[i] = 0
-            else:
-                if leg[j].osc[3].Y[i] < 0:
-                    leg[j].osc[3].Y[i] = 0 """
-            #########
             if leg[j].osc[2].Y[i] < 0:
                 leg[j].osc[2].Y[i] = 0
             if j<=3:
+                #馬達轉動方向相關
                 leg[j].osc[2].Y[i]=-leg[j].osc[2].Y[i]
                 leg[j].osc[3].Y[i]=-leg[j].osc[3].Y[i]
             else:
                 leg[j].osc[1].Y[i]=-leg[j].osc[1].Y[i]
-        leg[1].osc[3].Y[i]=-leg[1].osc[3].Y[i]
-        leg[6].osc[3].Y[i]=-leg[6].osc[3].Y[i]
+            
         
-
-        """ 
-        #leg[2,5]的osc[1]要*-1      
-        leg[2].osc[1].Y[i]=-leg[2].osc[1].Y[i] 
-        leg[5].osc[1].Y[i]=-leg[5].osc[1].Y[i] 
-        """
  
 
     
