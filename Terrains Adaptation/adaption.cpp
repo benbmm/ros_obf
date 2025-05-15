@@ -30,7 +30,7 @@ FILE *pitch_data = NULL;
 FILE *roll_data = NULL;
 
 // 將膝關節的控制值限制在0.3以下
-#define limit_knee_output 0
+#define limit_knee_output 1
 
 #define _Maxstep 40000
 #define _count 1000
@@ -172,9 +172,7 @@ class adaption_node : public rclcpp::Node {
       ctrl_val = 999;
     }
 
-    RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
-                "pitch:%f\troll:%f\tchange:%d\nctrl_val:%f\tclad:%d\nstep=%d\n", pitch,
-                roll, change, ctrl_val, clad,step);
+    //RCLCPP_INFO(rclcpp::get_logger("rclcpp"),"pitch:%f\troll:%f\tchange:%d\nctrl_val:%f\tclad:%d\nstep=%d\n", pitch,roll, change, ctrl_val, clad,step);
   }
   void reduce_by_min_if_nonzero(int set) {
     if (set == 1) {
@@ -710,8 +708,7 @@ class adaption_node : public rclcpp::Node {
                   (leg[j].deep[num_count] - leg[j].deep[num_count - 1]) *
                       leg[j].lpara2;
               // printf("\ncccccccccccccccccc\nleg[j].out[num_count]=%f\n",leg[j].out[num_count]);
-              RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "leg[%d].out[%d]=%f", j,
-                          num_count, leg[j].out[num_count]);
+              //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "leg[%d].out[%d]=%f", j,num_count, leg[j].out[num_count]);
             } else {
               leg[j].out[num_count] = leg[j].out[num_count - 1];
             }

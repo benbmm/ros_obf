@@ -85,8 +85,8 @@ def walk(x, a, b):
         a=0.5
         b=-0.5
     print(f"c={c}\td={d}\n")
-    #a=1
-    #b=1
+    #a=0
+    #b=0
     #print(f"e={e}\n")
     servos["R00"].angle=(cpg_deg_change(leg[1].osc[1].Y[x] * a))
     servos["R01"].angle=(cpg_deg_change(leg[1].osc[2].Y[x] * c)+e)
@@ -267,7 +267,7 @@ class Servo(Node):
             if (response.a != 666 and response.b != 666):
                 self.a=response.a
                 self.b=response.b
-            self.get_logger().info(f"a={self.a},a={self.b},step={self.step}")
+            self.get_logger().info(f"a={self.a},b={self.b},step={self.step}")
             
         except Exception as e:
             self.get_logger().error(f'Service call failed: {e}')
@@ -293,7 +293,7 @@ class Servo(Node):
             if (change_mode):
                 global change
                 change = response_adaptio.change
-            self.get_logger().info(f'h1: {response_adaptio.h1}\th2: {response_adaptio.h2}\th3: {response_adaptio.h3}\th4: {response_adaptio.h4}\th5: {response_adaptio.h5}\th6: {response_adaptio.h6}\nchange:{change}\tstep:{self.step}\n')
+            self.get_logger().info(f'h1: {response_adaptio.h1}\th2: {response_adaptio.h2}\th3: {response_adaptio.h3}\th4: {response_adaptio.h4}\th5: {response_adaptio.h5}\th6: {response_adaptio.h6}\nchange:{response_adaptio.change}\tstep:{self.step}\n')
             if (self.step>0):
                 for i in range(1,7):
                     #self.get_logger().info(f"i={i}")

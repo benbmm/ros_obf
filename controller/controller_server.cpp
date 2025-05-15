@@ -36,11 +36,11 @@ int adaption_mode_in_clu;
 #define max_speed 50.0
 //////////////////////////////  define區
 ////////////////////////////////////////////
-#define normal_mode_clu "/home/user/ros2_obf_ws/src/controller_server/rule_s_dis05.txt"
+#define normal_mode_clu "/home/user/ros2_obf_ws/src/controller_server/rule_w_new_wall.txt"
 #define adaption_mode_clu "/home/user/ros2_obf_ws/src/controller_server/rule_s.txt"// 紀錄rule數量的文件
 //#define load_data_clu "/home/user/ros2_obf_ws/src/controller_server/new_close_rule_w.txt"
 
-#define normal_mode_FC "/home/user/ros2_obf_ws/src/controller_server/s_dis05.txt"
+#define normal_mode_FC "/home/user/ros2_obf_ws/src/controller_server/w_new_wall.txt"
 #define adaption_mode_FC "/home/user/ros2_obf_ws/src/controller_server/s.txt"// 紀錄FC參數的文件
 //#define load_data_FC  "/home/user/ros2_obf_ws/src/controller_server/new_close_w.txt"
 
