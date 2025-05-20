@@ -85,8 +85,8 @@ def walk(x, a, b):
         a=0.5
         b=-0.5
     print(f"c={c}\td={d}\n")
-    a=1
-    b=1
+    #a=1
+    #b=1
     #print(f"e={e}\n")
     servos["R00"].angle=(cpg_deg_change(leg[1].osc[1].Y[x] * a))
     servos["R01"].angle=(cpg_deg_change(leg[1].osc[2].Y[x] * c)+e)
@@ -111,6 +111,7 @@ def load_cpg():
     print("load cpg")
     #fixed_cpg
     #knee_high
+    #ankle_follow_knee
     file_paths = [
         f"/home/user/ros2_obf_ws/src/cpg/fixed_cpg/YYout{i}{j}.txt" for i in range(1, 7) for j in range(1, 4)
     ]
@@ -138,25 +139,26 @@ def cpg_deg_change(rad):
 def turn(num_count):
 
     #前後左右方位相關
-    #leg[1,6]的osc[3]*-1
-    #leg[2,5]的osc[3]*-1
+    #leg[1,6]的osc[3]*-1，ankle_follow_knee時不用，因為沒有方位問題
+    #leg[2,5]的osc[3]*-1，ankle_follow_knee時不用，因為沒有方位問題
 
     #改變姿勢相關
     #leg[1~6]的osc[2]>=90度
-    #leg[2,5]的osc[3]>=90度
+    #leg[2,5]的osc[3]>=90度，ankle_follow_knee時不用，因為踝關節不改
 
     #馬達轉動方向相關
     #leg[1,2,3]osc[2]*-1
     #leg[1,2,3]的osc[3]*-1
     #leg[4,5,6]的osc[1]*-1
-    
+
     for i in range(num_count + 1):
         #前後左右方位相關
+
         leg[1].osc[3].Y[i]=-leg[1].osc[3].Y[i]
         leg[6].osc[3].Y[i]=-leg[6].osc[3].Y[i]
 
         leg[2].osc[3].Y[i]=-leg[2].osc[3].Y[i]
-        leg[5].osc[3].Y[i]=-leg[5].osc[3].Y[i]
+        leg[5].osc[3].Y[i]=-leg[5].osc[3].Y[i] 
 
         #改變姿勢相關
         if leg[2].osc[3].Y[i] < 0:

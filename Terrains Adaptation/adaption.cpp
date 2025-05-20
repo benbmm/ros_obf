@@ -873,7 +873,7 @@ int main(int argc, char **argv) {
 const char *base_path = "/home/user/ros2_obf_ws/src/cpg";
 // fixed_cpg
 // knee_high
-const char *folder_name = "knee_high_2";  // <-- 修改這裡即可切換資料夾
+const char *folder_name = "fixed_cpg";  // <-- 修改這裡即可切換資料夾
 char full_path_buf[256];                  // 共用緩衝區
 
 #define MAKE_PATH(filename)                                              \
