@@ -39,12 +39,12 @@ NUM_SERVOS = 18
 _count = 1000
 
 #是否開啟適應地形
-adaption_mode=0
+adaption_mode=1
 #change是指在兩種模式切換:適應地形的時候踝關節固定，適應完則開啟踝關節，在controller node 中模糊控制器參數也會隨之切換
 #當change_mode=1 代表change值會隨著adaption node回傳值變化。=0時則始終不變，因此不會切換控制器，踝關節也維持固定角度
 change_mode=0
 #當adaption node偵測到姿態變化，回傳chang=1，servo node傳給controller node
-change=0
+change=1
 #ankle_follow_knee是指腳踝的訊號是膝關節*-k
 ankle_follow_knee=1 
 

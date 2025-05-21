@@ -31,6 +31,9 @@ FILE *deep1 = NULL;
 FILE *h1 = NULL;
 FILE *pitch_data = NULL;
 FILE *roll_data = NULL;
+FILE *Y14 = NULL;
+FILE *Y12 = NULL;
+
 
 // 將膝關節的控制值限制在0.3以下
 #define limit_knee_output 0
@@ -490,19 +493,13 @@ class adaption_node : public rclcpp::Node {
         
         if (i == 1) {
           if (j == 4) {
-            FILE *deep1 = fopen("/home/user/ros2_obf_ws/src/deep1.txt", "a");
             fprintf(deep1, "%f\n", leg[i].deep[count]);
-            fclose(deep1);
           }
           if (j == 4) {
-            FILE *Y14 = fopen("/home/user/ros2_obf_ws/src/Y14.txt", "a");
             fprintf(Y14, "%f\n", leg[i].osc[j].Y[count]);
-            fclose(Y14);
           }
           if (j == 2) {
-            FILE *Y12 = fopen("/home/user/ros2_obf_ws/src/Y12.txt", "a");
             fprintf(Y12, "%f\n", leg[i].osc[2].Y[count]);
-            fclose(Y12);
           }
         }
       }
@@ -1227,12 +1224,19 @@ void init_cpg() {
   double abc = 0.1;
   // 給初值，一定要給，每個震盪器初始值都要不同，且同個帳盪器Uf和Vf不能一樣，同隻腳的也不能一樣
   // 原本是用隨機的，這裡因為要使輸出訊號固定，所以改成直接指定
-  double Uf_values[18] = {0.115, 0.215, 0.315, 0.415, 0.515, 0.615,
-                          0.715, 0.815, 0.915, 1.015, 0.155, 0.255,
-                          0.355, 0.455, 0.555, 0.655, 0.755};
+  double Uf_values[24] = {
+        0.01, 0.02, 0.03, 0.04, 0.05, 0.06,
+        0.07, 0.08, 0.09, 0.10, 0.11, 0.12,
+        0.13, 0.14, 0.15, 0.16, 0.17, 0.18,
+        0.19, 0.20, 0.21, 0.22, 0.23, 0.24
+    };
 
-  double Vf_values[18] = {0.9,  0.8,  0.7,  0.6,  0.5,  0.4,  0.3,  0.2,  0.1,
-                          0.85, 0.75, 0.65, 0.55, 0.45, 0.35, 0.25, 0.15, 0.05};
+  double Vf_values[24] = {
+        0.025, 0.035, 0.045, 0.055, 0.065, 0.075,
+        0.085, 0.095, 0.105, 0.115, 0.125, 0.135,
+        0.145, 0.155, 0.165, 0.175, 0.185, 0.195,
+        0.205, 0.215, 0.225, 0.235, 0.245, 0.255
+    };
 
   int index = 0;
 
@@ -1292,6 +1296,14 @@ void open_log_files() {
   if (!h1) {
     perror("Failed to open log files:h1.txt");
   }
+  Y14 = fopen("/home/user/ros2_obf_ws/src/sensor_data/Y14.txt", "a");
+  if (!Y14) {
+    perror("Failed to open log files:Y14.txt");
+  }
+  Y12 = fopen("/home/user/ros2_obf_ws/src/sensor_data/Y12.txt", "a");
+  if (!Y12) {
+    perror("Failed to open log files:Y12.txt");
+  }
 }
 
 void close_log_files() {
@@ -1299,4 +1311,6 @@ void close_log_files() {
   if (roll_data) fclose(roll_data);
   if (deep1) fclose(deep1);
   if (h1) fclose(h1);
+  if (Y12) fclose(Y12);
+  if (Y14) fclose(Y14);
 }
