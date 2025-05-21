@@ -318,8 +318,8 @@ class controller : public rclcpp::Node {
     too_close_left = 0;
     too_close_right = 0;
     // 目前都用左沿牆
-    decision_left = 0;
-    decision_right = 1;
+    decision_left = 1;
+    decision_right = 0;
 
     if (decision_left == 1) {
       std::cout << "LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL"
