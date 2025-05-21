@@ -45,6 +45,8 @@ adaption_mode=0
 change_mode=0
 #當adaption node偵測到姿態變化，回傳chang=1，servo node傳給controller node
 change=0
+#ankle_follow_knee是指腳踝的訊號是膝關節*-k
+ankle_follow_knee=1 
 
 class OSC:
     def __init__(self):
@@ -139,12 +141,12 @@ def cpg_deg_change(rad):
 def turn(num_count):
 
     #前後左右方位相關
-    #leg[1,6]的osc[3]*-1，ankle_follow_knee時不用，因為沒有方位問題
-    #leg[2,5]的osc[3]*-1，ankle_follow_knee時不用，因為沒有方位問題
+    #leg[1,6]的osc[3]*-1
+    #leg[2,5]的osc[3]*-1
 
     #改變姿勢相關
     #leg[1~6]的osc[2]>=90度
-    #leg[2,5]的osc[3]>=90度，ankle_follow_knee時不用，因為踝關節不改
+    #leg[2,5]的osc[3]>=90度
 
     #馬達轉動方向相關
     #leg[1,2,3]osc[2]*-1
