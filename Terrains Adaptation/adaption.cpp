@@ -36,7 +36,7 @@ FILE *Y12 = NULL;
 
 
 // 將膝關節的控制值限制在0.3以下
-#define limit_knee_output 0
+#define limit_knee_output 1
 
 #define _Maxstep 40000
 #define _count 1000
@@ -518,9 +518,9 @@ class adaption_node : public rclcpp::Node {
     }
     for (int j = 1; j <= 6; ++j) {
       leg[j].osc[2].Y[num_count] = leg[j].osc[2].Y[num_count] * 1.2;
-      if (leg[j].osc[2].Y[num_count] > 0.7) {
-        leg[j].osc[2].Y[num_count] = 0.7;
-      }
+      /* if (leg[j].osc[2].Y[num_count] > 0.8) {
+        leg[j].osc[2].Y[num_count] = 0.8;
+      } */
       if (leg[j].osc[2].Y[num_count] < 0) {
         leg[j].osc[2].Y[num_count] = 0;
       }
@@ -1204,7 +1204,7 @@ void load_cpg(void) {
 void init_cpg() {
   RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "init_cpg");
   for (int i = 1; i <= 6; i++) {
-    for (int j = 1; j <= 3; j++) {
+    for (int j = 1; j <= 4; j++) {
       for (int k = 0; k <= _Maxstep; k++) {
         leg[i].osc[j].dUe[k] = 0;
         leg[i].osc[j].Ue[k] = 0;
@@ -1241,7 +1241,7 @@ void init_cpg() {
   int index = 0;
 
   for (int i = 1; i <= 6; i++) {
-    for (int j = 1; j <= 3; j++) {
+    for (int j = 1; j <= 4; j++) {
       leg[i].osc[j].Ue[1] = 0;
       leg[i].osc[j].Ve[1] = 0;
 

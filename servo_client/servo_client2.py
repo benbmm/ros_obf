@@ -112,10 +112,10 @@ def walk(x, a, b):
 def load_cpg():
     print("load cpg")
     #fixed_cpg
-    #knee_high
+    #knee_high_5
     #ankle_follow_knee
     file_paths = [
-        f"/home/user/ros2_obf_ws/src/cpg/fixed_cpg/YYout{i}{j}.txt" for i in range(1, 7) for j in range(1, 4)
+        f"/home/user/ros2_obf_ws/src/cpg/knee_high_5/YYout{i}{j}.txt" for i in range(1, 7) for j in range(1, 4)
     ]
     files = [open(path, "r") for path in file_paths]
 
