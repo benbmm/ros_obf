@@ -58,10 +58,10 @@ double roll, pitch, yaw;
 double roll_temp, pitch_temp, yaw_temp;
 double e[7];  // 存roll, pitch在六個方向的分量
 double temp = 0, number[7] = {0};
-double kp[7] = {0, -14, -16.25, -14, 14, 16.25, 14};
-double kd[7] = {0, -0.2, -0.2, -0.2, 0.2, 0.2, 0.2}; 
-/* double kp[7] = {0, 14, 16.25, 14, -14, -16.25, -14};
-double kd[7] = {0, 0.2, 0.2, 0.2, -0.2, -0.2, -0.2}; */
+/* double kp[7] = {0, -14, -16.25, -14, 14, 16.25, 14};
+double kd[7] = {0, -0.2, -0.2, -0.2, 0.2, 0.2, 0.2};  */
+double kp[7] = {0, 14, 16.25, 14, -14, -16.25, -14};
+double kd[7] = {0, 0.2, 0.2, 0.2, -0.2, -0.2, -0.2}; 
 double h[7] = {0};
 // 當輸出的膝關節控制量發生變化，則change=1
 int change = 0;

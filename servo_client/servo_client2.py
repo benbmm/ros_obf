@@ -70,7 +70,7 @@ def walk(x, a, b):
     if (not change):
         d=1
     else:
-        d=0
+        d=-1
     
     if (adaption_mode==1):
         e=30
@@ -87,27 +87,27 @@ def walk(x, a, b):
         a=0.5
         b=-0.5
     print(f"c={c}\td={d}\n")
-    #a=1
-    #b=1
+    a=0
+    b=0
     #print(f"e={e}\n")
     servos["R00"].angle=(cpg_deg_change(leg[1].osc[1].Y[x] * a))
     servos["R01"].angle=(cpg_deg_change(leg[1].osc[2].Y[x] * c)+e)
-    servos["R02"].angle=(cpg_deg_change(leg[1].osc[3].Y[x] * d)-e)
+    servos["R02"].angle=(cpg_deg_change(leg[1].osc[2].Y[x] * d)-e)
     servos["R10"].angle=(cpg_deg_change(leg[2].osc[1].Y[x] * a))
     servos["R11"].angle=(cpg_deg_change(leg[2].osc[2].Y[x] * c)+e)
-    servos["R12"].angle=(cpg_deg_change(leg[2].osc[3].Y[x] * d)-e)
+    servos["R12"].angle=(cpg_deg_change(leg[2].osc[2].Y[x] * d)-e)
     servos["R20"].angle=(cpg_deg_change(leg[3].osc[1].Y[x] * a))
     servos["R21"].angle=(cpg_deg_change(leg[3].osc[2].Y[x] * c)+e)
-    servos["R22"].angle=(cpg_deg_change(leg[3].osc[3].Y[x] * d)-e)
+    servos["R22"].angle=(cpg_deg_change(leg[3].osc[2].Y[x] * d)-e)
     servos["L00"].angle=(cpg_deg_change(leg[6].osc[1].Y[x] * b))
     servos["L01"].angle=(cpg_deg_change(leg[6].osc[2].Y[x] * c)-e)
-    servos["L02"].angle=(cpg_deg_change(leg[6].osc[3].Y[x] * d)+e)
+    servos["L02"].angle=(cpg_deg_change(leg[6].osc[2].Y[x] * d)+e)
     servos["L10"].angle=(cpg_deg_change(leg[5].osc[1].Y[x] * b))
     servos["L11"].angle=(cpg_deg_change(leg[5].osc[2].Y[x] * c)-e)
-    servos["L12"].angle=(cpg_deg_change(leg[5].osc[3].Y[x] * d)+e)
+    servos["L12"].angle=(cpg_deg_change(leg[5].osc[2].Y[x] * d)+e)
     servos["L20"].angle=(cpg_deg_change(leg[4].osc[1].Y[x] * b))
     servos["L21"].angle=(cpg_deg_change(leg[4].osc[2].Y[x] * c)-e)
-    servos["L22"].angle=(cpg_deg_change(leg[4].osc[3].Y[x] * d)+e)
+    servos["L22"].angle=(cpg_deg_change(leg[4].osc[2].Y[x] * d)+e)
 
 def load_cpg():
     print("load cpg")
@@ -290,7 +290,7 @@ class Servo(Node):
             if (change_mode):
                 global change
                 change = response_adaptio.change
-            self.get_logger().info(f'h1: {response_adaptio.h1}\th2: {response_adaptio.h2}\th3: {response_adaptio.h3}\th4: {response_adaptio.h4}\th5: {response_adaptio.h5}\th6: {response_adaptio.h6}\nchange:{response_adaptio.change}\tstep:{self.step}\n')
+            """ self.get_logger().info(f'h1: {response_adaptio.h1}\th2: {response_adaptio.h2}\th3: {response_adaptio.h3}\th4: {response_adaptio.h4}\th5: {response_adaptio.h5}\th6: {response_adaptio.h6}\nchange:{response_adaptio.change}\tstep:{self.step}\n') """
             if (self.step>0):
                 for i in range(1,7):
                     #self.get_logger().info(f"i={i}")
