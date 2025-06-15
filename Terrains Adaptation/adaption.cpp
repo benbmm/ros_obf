@@ -35,7 +35,7 @@ FILE *Y14 = NULL;
 FILE *Y12 = NULL;
 
 
-// 將膝關節的控制值限制在0.3以下
+// 將膝關節的控制值限制在0.5以下
 #define limit_knee_output 1
 
 #define _Maxstep 40000
@@ -170,9 +170,7 @@ class adaption_node : public rclcpp::Node {
     response->h5 = h[5];
     response->h6 = h[6];
     response->change = change;
-    FILE *h1 = fopen("/home/user/ros2_obf_ws/src/h1.txt", "a");
     fprintf(h1, "%f\n", h[1]);
-    fclose(h1);
 
     // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "adapting{%d}", step);
     /* RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
@@ -374,6 +372,11 @@ class adaption_node : public rclcpp::Node {
       if (feed>thres){
         isBalanced=0;
       }
+      if (abs(pitch)>0.03 || abs(roll)>0.03){
+        isBalanced=0;
+      }else{
+        isBalanced=1;
+      }
       // feed = 0;
       // printf("i = %d\tfeed = %lf\n",i,feed);
       //----------------------------------------calculate
@@ -518,9 +521,9 @@ class adaption_node : public rclcpp::Node {
     }
     for (int j = 1; j <= 6; ++j) {
       leg[j].osc[2].Y[num_count] = leg[j].osc[2].Y[num_count] * 1.2;
-      /* if (leg[j].osc[2].Y[num_count] > 0.8) {
-        leg[j].osc[2].Y[num_count] = 0.8;
-      } */
+      if (leg[j].osc[2].Y[num_count] > 0.7) {
+        leg[j].osc[2].Y[num_count] = 0.7;
+      } 
       if (leg[j].osc[2].Y[num_count] < 0) {
         leg[j].osc[2].Y[num_count] = 0;
       }
@@ -739,11 +742,7 @@ class adaption_node : public rclcpp::Node {
               if (fabs(leg[j].height[num_count]) > ladder[3]) {
                 h[j] = -ladder[3];
                 leg[j].ttemp = -ladder[3];
-                if (limit_knee_output) {
-                  leg[j].clad = 2;
-                } else {
-                  leg[j].clad = 3;
-                }
+                leg[j].clad = 3;
                 change = 1;
                 printf("2realout[%d]=%lf\t", j, -ladder[3]);
                 // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
@@ -777,7 +776,12 @@ class adaption_node : public rclcpp::Node {
               if (fabs(leg[j].height[num_count]) > ladder[5]) {
                 h[j] = -ladder[5];
                 leg[j].ttemp = -ladder[5];
-                leg[j].clad = 5;
+                if (limit_knee_output) {
+                  leg[j].clad = 4;
+                } else {
+                  leg[j].clad = 5;
+                }
+                
                 change = 1;
                 printf("4realout[%d]=%lf\t", j, -ladder[5]);
               } else {
@@ -1002,11 +1006,7 @@ class adaption_node : public rclcpp::Node {
               if ((leg[j].height[num_count]) > ladder[3]) {
                 h[j] = ladder[3];
                 leg[j].ttemp = ladder[3];
-                if (limit_knee_output) {
-                  leg[j].clad = 2;
-                } else {
-                  leg[j].clad = 3;
-                }
+                leg[j].clad = 3;
                 change = 1;
                 printf("2realout[%d]=%lf\t", j, ladder[3]);
               } else {
@@ -1038,7 +1038,11 @@ class adaption_node : public rclcpp::Node {
               if ((leg[j].height[num_count]) > ladder[5]) {
                 h[j] = ladder[5];
                 leg[j].ttemp = ladder[5];
-                leg[j].clad = 5;
+                if (limit_knee_output) {
+                  leg[j].clad = 4;
+                } else {
+                  leg[j].clad = 5;
+                }
                 change = 1;
                 printf("4realout[%d]=%lf\t", j, ladder[5]);
               } else {

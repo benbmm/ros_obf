@@ -45,8 +45,6 @@ adaption_mode=1
 change_mode=0
 #當adaption node偵測到姿態變化，回傳chang=1，servo node傳給controller node
 change=1
-#ankle_follow_knee是指腳踝的訊號是膝關節*-k
-ankle_follow_knee=1 
 
 class OSC:
     def __init__(self):
@@ -60,12 +58,12 @@ class CPG:
 leg = [CPG() for _ in range(7)]  # 6個腿+1個（從1開始）
 
 def walk(x, a, b):
+    
     #a:調整右髖關節擺幅
     #b:調整左髖關節擺幅
     #c:調整左、右膝關節擺幅
     #d:調整左、右踝關節擺幅
     #e:調整踝關節擺幅，在適應地形時需要將機身抬高
-    
     c=1
     if (not change):
         d=1
@@ -76,7 +74,7 @@ def walk(x, a, b):
         e=30
     else:
         e=0
-    print(f"a={a}\tb={b}\n")
+    
     #距離牆太近原地旋轉
     if (a==-2 and b==2):
         d=0
@@ -87,27 +85,48 @@ def walk(x, a, b):
         a=0.5
         b=-0.5
     print(f"c={c}\td={d}\n")
-    a=0
-    b=0
+    #a=0
+    #b=0
     #print(f"e={e}\n")
-    servos["R00"].angle=(cpg_deg_change(leg[1].osc[1].Y[x] * a))
-    servos["R01"].angle=(cpg_deg_change(leg[1].osc[2].Y[x] * c)+e)
-    servos["R02"].angle=(cpg_deg_change(leg[1].osc[2].Y[x] * d)-e)
-    servos["R10"].angle=(cpg_deg_change(leg[2].osc[1].Y[x] * a))
-    servos["R11"].angle=(cpg_deg_change(leg[2].osc[2].Y[x] * c)+e)
-    servos["R12"].angle=(cpg_deg_change(leg[2].osc[2].Y[x] * d)-e)
-    servos["R20"].angle=(cpg_deg_change(leg[3].osc[1].Y[x] * a))
-    servos["R21"].angle=(cpg_deg_change(leg[3].osc[2].Y[x] * c)+e)
-    servos["R22"].angle=(cpg_deg_change(leg[3].osc[2].Y[x] * d)-e)
-    servos["L00"].angle=(cpg_deg_change(leg[6].osc[1].Y[x] * b))
-    servos["L01"].angle=(cpg_deg_change(leg[6].osc[2].Y[x] * c)-e)
-    servos["L02"].angle=(cpg_deg_change(leg[6].osc[2].Y[x] * d)+e)
-    servos["L10"].angle=(cpg_deg_change(leg[5].osc[1].Y[x] * b))
-    servos["L11"].angle=(cpg_deg_change(leg[5].osc[2].Y[x] * c)-e)
-    servos["L12"].angle=(cpg_deg_change(leg[5].osc[2].Y[x] * d)+e)
-    servos["L20"].angle=(cpg_deg_change(leg[4].osc[1].Y[x] * b))
-    servos["L21"].angle=(cpg_deg_change(leg[4].osc[2].Y[x] * c)-e)
-    servos["L22"].angle=(cpg_deg_change(leg[4].osc[2].Y[x] * d)+e)
+    if(x<100):
+        servos["R00"].angle=(cpg_deg_change(0 * a))
+        servos["R01"].angle=(cpg_deg_change(0 * c)+e)
+        servos["R02"].angle=(cpg_deg_change(0 * d)-e-9)
+        servos["R10"].angle=(cpg_deg_change(0 * a))
+        servos["R11"].angle=(cpg_deg_change(0 * c)+e)
+        servos["R12"].angle=(cpg_deg_change(0 * d)-e)
+        servos["R20"].angle=(cpg_deg_change(0 * a))
+        servos["R21"].angle=(cpg_deg_change(0 * c)+e)
+        servos["R22"].angle=(cpg_deg_change(0 * d)-e-1)
+        servos["L00"].angle=(cpg_deg_change(0 * b))
+        servos["L01"].angle=(cpg_deg_change(0 * c)-e)
+        servos["L02"].angle=(cpg_deg_change(0 * d)+e-7)
+        servos["L10"].angle=(cpg_deg_change(0 * b))
+        servos["L11"].angle=(cpg_deg_change(0 * c)-e)
+        servos["L12"].angle=(cpg_deg_change(0 * d)+e-7)
+        servos["L20"].angle=(cpg_deg_change(0 * b))
+        servos["L21"].angle=(cpg_deg_change(0 * c)-e)
+        servos["L22"].angle=(cpg_deg_change(0 * d)+e+1)
+    else:
+        servos["R00"].angle=(cpg_deg_change(leg[1].osc[1].Y[x] * a))
+        servos["R01"].angle=(cpg_deg_change(leg[1].osc[2].Y[x] * c)+e)
+        servos["R02"].angle=(cpg_deg_change(leg[1].osc[2].Y[x] * d)-e-9)
+        servos["R10"].angle=(cpg_deg_change(leg[2].osc[1].Y[x] * a))
+        servos["R11"].angle=(cpg_deg_change(leg[2].osc[2].Y[x] * c)+e)
+        servos["R12"].angle=(cpg_deg_change(leg[2].osc[2].Y[x] * d)-e)
+        servos["R20"].angle=(cpg_deg_change(leg[3].osc[1].Y[x] * a))
+        servos["R21"].angle=(cpg_deg_change(leg[3].osc[2].Y[x] * c)+e)
+        servos["R22"].angle=(cpg_deg_change(leg[3].osc[2].Y[x] * d)-e-1)
+        servos["L00"].angle=(cpg_deg_change(leg[6].osc[1].Y[x] * b))
+        servos["L01"].angle=(cpg_deg_change(leg[6].osc[2].Y[x] * c)-e)
+        servos["L02"].angle=(cpg_deg_change(leg[6].osc[2].Y[x] * d)+e-7)
+        servos["L10"].angle=(cpg_deg_change(leg[5].osc[1].Y[x] * b))
+        servos["L11"].angle=(cpg_deg_change(leg[5].osc[2].Y[x] * c)-e)
+        servos["L12"].angle=(cpg_deg_change(leg[5].osc[2].Y[x] * d)+e-7)
+        servos["L20"].angle=(cpg_deg_change(leg[4].osc[1].Y[x] * b))
+        servos["L21"].angle=(cpg_deg_change(leg[4].osc[2].Y[x] * c)-e)
+        servos["L22"].angle=(cpg_deg_change(leg[4].osc[2].Y[x] * d)+e+1)
+    print(f"x={x}\ta={a}\tb={b}\n(cpg_deg_change(leg[4].osc[2].Y[x] * d)+e+1)={(cpg_deg_change(leg[4].osc[2].Y[x] * d)+e+1)}\n")
 
 def load_cpg():
     print("load cpg")
@@ -115,7 +134,7 @@ def load_cpg():
     #knee_high_5
     #ankle_follow_knee
     file_paths = [
-        f"/home/user/ros2_obf_ws/src/cpg/knee_high_5/YYout{i}{j}.txt" for i in range(1, 7) for j in range(1, 4)
+        f"/home/user/ros2_obf_ws/src/cpg/knee_high_1.5/YYout{i}{j}.txt" for i in range(1, 7) for j in range(1, 4)
     ]
     files = [open(path, "r") for path in file_paths]
 
@@ -242,8 +261,7 @@ class Servo(Node):
         #self.get_logger().info(f'interval: {interval:.4f} (s)')
         self.last_execution_time = current_time
         #self.get_logger().info(f'walk:step={self.step-1}')
-        if(self.step>100):
-            walk(self.step-1,self.a,self.b)
+        walk(self.step-1,self.a,self.b)
         
 
     def send_request(self):
@@ -291,7 +309,7 @@ class Servo(Node):
                 global change
                 change = response_adaptio.change
             """ self.get_logger().info(f'h1: {response_adaptio.h1}\th2: {response_adaptio.h2}\th3: {response_adaptio.h3}\th4: {response_adaptio.h4}\th5: {response_adaptio.h5}\th6: {response_adaptio.h6}\nchange:{response_adaptio.change}\tstep:{self.step}\n') """
-            if (self.step>0):
+            if (self.step>115):
                 for i in range(1,7):
                     #self.get_logger().info(f"i={i}")
                     #self.get_logger().info(f"leg[{i}].osc[2].Y[{self.step}]={leg[i].osc[2].Y[self.step]}")
@@ -299,7 +317,7 @@ class Servo(Node):
                     #self.get_logger().info(f"self.h[{i}]={self.h[i]}\tstep={self.step}")
                     if (self.h[i] != leg[i].osc[2].Y[self.step]):
                         #self.get_logger().info(f"change,leg[{i}].osc[2].Y[{self.step}]={self.h[i]}")
-                        leg[i].osc[2].Y[self.step]=self.h[i]
+                        leg[i].osc[2].Y[self.step]=self.h[i]*1.5
                     """ else:
                         self.get_logger().info("no change")
             else:

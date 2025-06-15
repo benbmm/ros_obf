@@ -317,7 +317,7 @@ class controller : public rclcpp::Node {
     //目前不原地旋轉
     too_close_left = 0;
     too_close_right = 0;
-    // 目前都用右沿牆
+    // 目前都用左沿牆
     decision_left = 1;
     decision_right = 0;
 
