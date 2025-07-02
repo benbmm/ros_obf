@@ -85,8 +85,8 @@ def walk(x, a, b):
         a=0.5
         b=-0.5
     print(f"c={c}\td={d}\n")
-    #a=0
-    #b=0
+    a=0
+    b=0
     #print(f"e={e}\n")
     if(x<100):
         servos["R00"].angle=(cpg_deg_change(0 * a))
@@ -316,8 +316,8 @@ class Servo(Node):
                     #print(f"diff={self.h[i]-leg[1].osc[2].Y[self.step]}")
                     #self.get_logger().info(f"self.h[{i}]={self.h[i]}\tstep={self.step}")
                     if (self.h[i] != leg[i].osc[2].Y[self.step]):
-                        #self.get_logger().info(f"change,leg[{i}].osc[2].Y[{self.step}]={self.h[i]}")
-                        leg[i].osc[2].Y[self.step]=self.h[i]*1.5
+                        self.get_logger().info(f"change,leg[{i}].osc[2].Y[{self.step}]={self.h[i]}")
+                        leg[i].osc[2].Y[self.step]=self.h[i]
                     """ else:
                         self.get_logger().info("no change")
             else:
