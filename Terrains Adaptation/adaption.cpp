@@ -35,7 +35,7 @@ FILE *Y14 = NULL;
 FILE *Y12 = NULL;
 
 // 將膝關節的控制值限制在0.5以下
-#define limit_knee_output 0.9
+#define limit_knee_output 1.0
 // 用來設定CPG訊號放大倍數
 #define CPG_Scale_Factor 1.5
 
