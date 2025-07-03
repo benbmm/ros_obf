@@ -85,8 +85,8 @@ def walk(x, a, b):
         a=0.5
         b=-0.5
     print(f"c={c}\td={d}\n")
-    #a=0
-    #b=0
+    a=0
+    b=0
     #print(f"e={e}\n")
     if(x<100):
         servos["R00"].angle=(cpg_deg_change(0 * a))
