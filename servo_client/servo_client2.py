@@ -305,6 +305,7 @@ class Servo(Node):
                     else:
                         leg[i].osc[2].Y[self.step]=self.y_max[i]
                         self.get_logger().info(f"no change")
+                    self.get_logger().info(f"self.y_max[{i}]={self.y_max[i]}")
                     """ else:
                         self.get_logger().info("no change")
             else:
