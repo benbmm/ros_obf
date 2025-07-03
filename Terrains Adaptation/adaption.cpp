@@ -261,8 +261,8 @@ class adaption_node : public rclcpp::Node {
       double feed = 0;
       pitch=0;
       roll=0;
-      if(num_count>=200 && num_count<=250){
-        pitch=0.1;
+      if(num_count>=200 && num_count<=300){
+        roll=0.5;
       }
       if (i == 1) {
         isBalanced = 1;
