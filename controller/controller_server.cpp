@@ -37,11 +37,11 @@ int adaption_mode_in_clu;
 //////////////////////////////  define區
 ////////////////////////////////////////////
 #define normal_mode_clu "/home/user/ros2_obf_ws/src/controller_server/rule_w_new_wall.txt"
-#define adaption_mode_clu "/home/user/ros2_obf_ws/src/controller_server/new_close_rule_s.txt.txt"// 紀錄rule數量的文件
+#define adaption_mode_clu "/home/user/ros2_obf_ws/src/controller_server/newankle_rule_s.txt"// 紀錄rule數量的文件
 //#define load_data_clu "/home/user/ros2_obf_ws/src/controller_server/new_close_rule_w.txt"
 
 #define normal_mode_FC "/home/user/ros2_obf_ws/src/controller_server/w_new_wall.txt"
-#define adaption_mode_FC "/home/user/ros2_obf_ws/src/controller_server/new_close_rule_s.txt.txt"// 紀錄FC參數的文件
+#define adaption_mode_FC "/home/user/ros2_obf_ws/src/controller_server/newankle_s.txt"// 紀錄FC參數的文件
 //#define load_data_FC  "/home/user/ros2_obf_ws/src/controller_server/new_close_w.txt"
 
 // #define save_ave_vel "controller/nsga_v1/save_ave_speed.txt"

@@ -85,8 +85,8 @@ def walk(x, a, b):
         a=0.5
         b=-0.5
     print(f"c={c}\td={d}\n")
-    a=0
-    b=0
+    #a=0
+    #b=0
     #print(f"e={e}\n")
     if(x<100):
         servos["R00"].angle=(cpg_deg_change(0 * a))
@@ -293,7 +293,7 @@ class Servo(Node):
         #self.get_logger().info(f'send_request_adaption:step={self.step}')
         self.req_adaption.step=self.step
         self.future_adaption = self.cli_adaption.call_async(self.req_adaption)
-        self.future_adaption.add_done_callback(self.handle_response_adaption)
+        #self.future_adaption.add_done_callback(self.handle_response_adaption)
 
     #處理adaption node的response，回傳值h1~h6為膝關節的控制訊號，change值為是否有姿態變化
     def handle_response_adaption(self, future_adaption):
