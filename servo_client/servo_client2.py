@@ -38,6 +38,9 @@ Maxstep = 40000
 NUM_SERVOS = 18
 _count = 1000
 
+adaptation_start_step=115
+
+start_walking_step=100
 #是否開啟適應地形
 adaption_mode=1
 #change是指在兩種模式切換:適應地形的時候踝關節固定，適應完則開啟踝關節，在controller node 中模糊控制器參數也會隨之切換
@@ -88,7 +91,7 @@ def walk(x, a, b):
     #a=0
     #b=0
     #print(f"e={e}\n")
-    if(x<100):
+    if(x<start_walking_step):
         servos["R00"].angle=(cpg_deg_change(0 * a))
         servos["R01"].angle=(cpg_deg_change(0 * c)+e)
         servos["R02"].angle=(cpg_deg_change(0 * d)-e-9)
@@ -293,7 +296,7 @@ class Servo(Node):
         #self.get_logger().info(f'send_request_adaption:step={self.step}')
         self.req_adaption.step=self.step
         self.future_adaption = self.cli_adaption.call_async(self.req_adaption)
-        #self.future_adaption.add_done_callback(self.handle_response_adaption)
+        self.future_adaption.add_done_callback(self.handle_response_adaption)
 
     #處理adaption node的response，回傳值h1~h6為膝關節的控制訊號，change值為是否有姿態變化
     def handle_response_adaption(self, future_adaption):
@@ -309,7 +312,7 @@ class Servo(Node):
                 global change
                 change = response_adaptio.change
             """ self.get_logger().info(f'h1: {response_adaptio.h1}\th2: {response_adaptio.h2}\th3: {response_adaptio.h3}\th4: {response_adaptio.h4}\th5: {response_adaptio.h5}\th6: {response_adaptio.h6}\nchange:{response_adaptio.change}\tstep:{self.step}\n') """
-            if (self.step>115):
+            if (self.step>adaptation_start_step):
                 for i in range(1,7):
                     #self.get_logger().info(f"i={i}")
                     #self.get_logger().info(f"leg[{i}].osc[2].Y[{self.step}]={leg[i].osc[2].Y[self.step]}")
