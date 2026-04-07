@@ -1,0 +1,813 @@
+// dev branch 是為了將判斷pitch
+// roll是否平穩條件變嚴苛，在deep的時候判斷是否穩定，晃動幅度底較大的腳就可以繼續控制
+#include <math.h>
+
+#include <algorithm>
+#include <cmath>
+#include <fstream>
+#include <iostream>
+#include <sstream>
+#include <string>
+#include <vector>
+
+// ROS2
+#include "interfaces/srv/command_adaption.hpp"
+#include "rclcpp/rclcpp.hpp"
+#include "sensor_msgs/msg/imu.hpp"
+#include "tf2/LinearMath/Matrix3x3.h"
+#include "tf2/LinearMath/Quaternion.h"
+
+void load_cpg(void);
+void init_cpg();
+void turn(int);
+void cal_out_3_sec(int);
+void cal_out_3_walk(int);
+void open_log_files();
+void close_log_files();
+
+double ch_max(double);
+// 檔案指標設為全域變數
+FILE* deep1 = NULL;
+FILE* h1 = NULL;
+FILE* pitch_data = NULL;
+FILE* roll_data = NULL;
+FILE* Y14 = NULL;
+FILE* Y12 = NULL;
+
+// 將膝關節的控制值限制在0.5以下
+#define limit_knee_output 1.0
+// 用來設定CPG訊號放大倍數
+#define CPG_Scale_Factor 1.5
+
+#define _Maxstep 40000
+#define _count 1000
+#define NUM_SERVOS 18
+
+const char* SERVOS[NUM_SERVOS] = {"R00", "R01", "R02", "R10", "R11", "R12",
+                                  "R20", "R21", "R22", "L00", "L01", "L02",
+                                  "L10", "L11", "L12", "L20", "L21", "L22"};
+int k = 0;
+int kk = 0, kkk[7] = {0}, aaa[7] = {0}, judge[7] = {0, 2, 2, 2, 2, 2, 2},
+    cc[7] = {0};
+double pi[7] = {0}, ro[7] = {0},
+       ladder[13] = {0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6,
+                     0.7, 0.8, 0.9, 1.0, 1.1, 1.2};
+
+double thres = 0.03;
+int isBalanced;
+
+double roll, pitch, yaw;
+double roll_temp, pitch_temp, yaw_temp;
+double e[7];  // 存roll, pitch在六個方向的分量
+double temp = 0, number[7] = {0};
+double kp[7] = {0, 14, 16.25, 14, -14, -16.25, -14};
+double kd[7] = {0, 0.2, 0.2, 0.2, -0.2, -0.2, -0.2};
+double h[7] = {0};
+// 當輸出的膝關節控制量發生變化，則change=1
+int change = 0;
+int reduce_by_min_135 = 0;
+int reduce_by_min_246 = 0;
+double min_abs_val;
+
+const double step_long = 0.2;
+const double Wfe = -1.5;  // Flexor&Extensor weight connection
+const double t1 = 0.5;    // orig = 1
+const double t2 = 7.5;    // orig = 15
+const double U0 = 1.3;    // 4??????
+const double b = 3;
+const double Wij = -1;
+
+using namespace std;
+
+class OSC {
+  friend class CPG;
+
+ public:
+  double dUe[_count + _Maxstep], dUf[_count + _Maxstep], dVe[_count + _Maxstep],
+      dVf[_count + _Maxstep];
+  double Ue[_count + _Maxstep], Uf[_count + _Maxstep], Ve[_count + _Maxstep],
+      Vf[_count + _Maxstep], Ye[_count + _Maxstep], Yf[_count + _Maxstep],
+      Y[_count + _Maxstep];
+};
+
+class CPG {
+  friend class OSC;
+
+ public:
+  OSC osc[4 + 1];
+  double deep[_Maxstep + 1];
+  double out[_Maxstep + 1];
+  double lpara, lpara2, height[_Maxstep + 1], ttemp = 0;
+  int clad = 1, no = 0, ww = 1;
+};
+
+CPG leg[6 + 1];
+
+class adaption_node : public rclcpp::Node {
+ public:
+  adaption_node() : Node("adaption_node") {
+    sub_ = this->create_subscription<sensor_msgs::msg::Imu>(
+        "/imu/data", 1,
+        std::bind(&adaption_node::callback, this, std::placeholders::_1));
+    service_ = this->create_service<interfaces::srv::CommandAdaption>(
+        "commandadaption",
+        std::bind(&adaption_node::Service_callback, this, std::placeholders::_1,
+                  std::placeholders::_2));
+
+    RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "adaption_node ok");
+  }
+
+  void callback(const sensor_msgs::msg::Imu::SharedPtr imu_data) {
+    // 四元數
+    tf2::Quaternion q(imu_data->orientation.x, imu_data->orientation.y,
+                      imu_data->orientation.z, imu_data->orientation.w);
+    // 將四元數轉換為旋轉矩陣
+    tf2::Matrix3x3 m(q);
+    // 轉歐拉角
+    m.getRPY(pitch_temp, roll_temp, yaw_temp);
+    roll_temp = -roll_temp;
+  }
+
+  void Service_callback(
+      const std::shared_ptr<interfaces::srv::CommandAdaption::Request> request,
+      std::shared_ptr<interfaces::srv::CommandAdaption::Response> response) {
+    int step = request->step;
+    roll = roll_temp;
+    pitch = pitch_temp;
+    fprintf(pitch_data, "%f\n", roll);
+    fprintf(roll_data, "%f\n", pitch);
+
+    initialization();
+    cal_out_3_sec(step);
+
+    response->h1 = h[1];
+    response->h2 = h[2];
+    response->h3 = h[3];
+    response->h4 = h[4];
+    response->h5 = h[5];
+    response->h6 = h[6];
+    response->change = change;
+    fprintf(h1, "%f\n", h[1]);
+
+    double ctrl_val;
+    int clad;
+    if (leg[1].osc[2].Y[step] >= 0 || leg[6].osc[2].Y[step] <= 0) {
+      if (leg[1].osc[2].Y[step] == 0) {
+        ctrl_val = abs(h[1]);
+        clad = leg[1].clad;
+      } else {
+        ctrl_val = abs(h[6]);
+        clad = leg[6].clad;
+      }
+    } else {
+      ctrl_val = 999;
+    }
+
+    RCLCPP_INFO(
+        rclcpp::get_logger("rclcpp"),
+        "pitch:%f\troll:%f\nchange:%d\nctrl_val:%f\tclad:%d\nisBalanced=%d\n",
+        pitch, roll, change, ctrl_val, clad, isBalanced);
+  }
+
+  double ch_max(double a) {
+    return (a >= 0) ? a : 0;
+  }
+
+  void initialization() {
+    for (int i = 1; i <= 6; i++) {
+      leg[i].lpara = kp[i];
+      leg[i].lpara2 = kd[i] / 0.2;
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // 計算 clad 階梯輸出（取代原本 clad==1~10 的重複 else-if 區塊）
+  // sign > 0 時輸出為正（leg 4~6），sign < 0 時輸出為負（leg 1~3）
+  // -----------------------------------------------------------------------
+  void apply_clad_ladder(int j, int num_count, int sign) {
+    double height_val = leg[j].height[num_count];
+    double abs_height = (sign < 0) ? fabs(height_val) : height_val;
+
+    int check_idx = leg[j].clad + 1;  // clad=1 比 ladder[2], clad=2 比 ladder[3]...
+
+    if (abs_height > ladder[check_idx]) {
+      // 超過門檻 → 輸出固定 ladder 值，升一級（最高保持在 10）
+      double out_val = sign * ladder[check_idx];
+      h[j] = out_val;
+      leg[j].ttemp = out_val;
+      int old_clad = leg[j].clad;
+      leg[j].clad = (leg[j].clad < 10) ? leg[j].clad + 1 : 10;
+      change = 1;
+      printf("%drealout[%d]=%lf\t", old_clad, j, out_val);
+    } else {
+      // 未超過 → 輸出實際 height，級別不變
+      h[j] = height_val;
+      leg[j].ttemp = height_val;
+      change = 1;
+      printf("%drealout[%d]=%lf\t", leg[j].clad, j, height_val);
+    }
+  }
+
+  void cal_out_3_sec(int num_count) {
+    int count = num_count;
+
+    for (int i = 1; i <= 6; i++) {
+      // 只計算實際用到的相鄰腳索引 a (i+1) 和 aaaaa (i+5)
+      int a = (i % 6) + 1;          // (i+1) mod 6，範圍 1~6
+      int aaaaa = ((i + 4) % 6) + 1; // (i+5) mod 6，範圍 1~6
+
+      // ---------------------------------------- calculate feed --------------------------------
+      double feed = 0;
+      if (i == 1) {
+        isBalanced = 1;
+        feed = (pitch + roll) * 0.707;
+      } else if (i == 2) {
+        feed = roll;
+      } else if (i == 3) {
+        feed = (-pitch + roll) * 0.707;
+      } else if (i == 4) {
+        feed = (-pitch - roll) * 0.707;
+      } else if (i == 5) {
+        feed = -roll;
+      } else if (i == 6) {
+        feed = (pitch - roll) * 0.707;
+      }
+
+      if (abs(pitch) > thres || abs(roll) > thres) {
+        isBalanced = 0;
+      } else {
+        isBalanced = 1;
+      }
+      // ---------------------------------------- calculate feed --------------------------------
+
+      for (int j = 1; j <= 4; j++) {
+        if (j == 1 || j == 2 || j == 3) {
+          int k = (j % 3) + 1;        // (j+1) mod 3，範圍 1~3
+          int kk = ((j + 1) % 3) + 1; // (j+2) mod 3，範圍 1~3
+
+          //*********************** Extensor neuron *************************
+          leg[i].osc[j].dUe[count] =
+              (-leg[i].osc[j].Ue[count] + (Wfe * leg[i].osc[j].Yf[count]) -
+               (b * leg[i].osc[j].Ve[count]) + U0 +
+               (Wij * (ch_max(leg[i].osc[k].Ye[count]) +
+                       ch_max(leg[i].osc[kk].Ye[count]) +
+                       ch_max(leg[a].osc[j].Ye[count]) +
+                       ch_max(leg[aaaaa].osc[j].Ye[count])))) /
+              t1;
+
+          leg[i].osc[j].Ue[count + 1] =
+              leg[i].osc[j].Ue[count] + (step_long * leg[i].osc[j].dUe[count]);
+          leg[i].osc[j].Ye[count + 1] = max(0.00, leg[i].osc[j].Ue[count + 1]);
+
+          leg[i].osc[j].dVe[count] =
+              (-leg[i].osc[j].Ve[count] + leg[i].osc[j].Ye[count + 1]) / t2;
+          leg[i].osc[j].Ve[count + 1] =
+              leg[i].osc[j].Ve[count] + (step_long * leg[i].osc[j].dVe[count]);
+
+          //*********************** Flexor neuron *************************
+          leg[i].osc[j].dUf[count] =
+              (-leg[i].osc[j].Uf[count] + (Wfe * leg[i].osc[j].Ye[count]) -
+               (b * leg[i].osc[j].Vf[count]) + U0 +
+               (Wij * (ch_max(leg[i].osc[k].Yf[count]) +
+                       ch_max(leg[i].osc[kk].Yf[count]) +
+                       ch_max(leg[a].osc[j].Yf[count]) +
+                       ch_max(leg[aaaaa].osc[j].Yf[count])))) /
+              t1;
+
+          leg[i].osc[j].Uf[count + 1] =
+              leg[i].osc[j].Uf[count] + (step_long * leg[i].osc[j].dUf[count]);
+          leg[i].osc[j].Yf[count + 1] = max(0.00, leg[i].osc[j].Uf[count + 1]);
+
+          leg[i].osc[j].dVf[count] =
+              (-leg[i].osc[j].Vf[count] + leg[i].osc[j].Yf[count + 1]) / t2;
+          leg[i].osc[j].Vf[count + 1] =
+              leg[i].osc[j].Vf[count] + (step_long * leg[i].osc[j].dVf[count]);
+
+          leg[i].osc[j].Y[count] =
+              leg[i].osc[j].Yf[count] - leg[i].osc[j].Ye[count];
+
+        } else {  // j == 4
+          int k = 1;
+          int kk = 3;
+
+          //*********************** Extensor neuron *************************
+          leg[i].osc[j].dUe[count] =
+              (feed - leg[i].osc[j].Ue[count] +
+               (Wfe * leg[i].osc[j].Yf[count]) - (b * leg[i].osc[j].Ve[count]) +
+               U0 +
+               (Wij * (ch_max(leg[i].osc[k].Ye[count]) +
+                       ch_max(leg[i].osc[kk].Ye[count]) +
+                       ch_max(leg[a].osc[j].Ye[count]) +
+                       ch_max(leg[aaaaa].osc[j].Ye[count])))) /
+              t1;
+
+          leg[i].osc[j].Ue[count + 1] =
+              leg[i].osc[j].Ue[count] + (step_long * leg[i].osc[j].dUe[count]);
+          leg[i].osc[j].Ye[count + 1] = max(0.00, leg[i].osc[j].Ue[count + 1]);
+
+          leg[i].osc[j].dVe[count] =
+              (-leg[i].osc[j].Ve[count] + leg[i].osc[j].Ye[count + 1]) / t2;
+          leg[i].osc[j].Ve[count + 1] =
+              leg[i].osc[j].Ve[count] + (step_long * leg[i].osc[j].dVe[count]);
+
+          //*********************** Flexor neuron *************************
+          leg[i].osc[j].dUf[count] =
+              (feed - leg[i].osc[j].Uf[count] +
+               (Wfe * leg[i].osc[j].Ye[count]) - (b * leg[i].osc[j].Vf[count]) +
+               U0 +
+               (Wij * (ch_max(leg[i].osc[k].Yf[count]) +
+                       ch_max(leg[i].osc[kk].Yf[count]) +
+                       ch_max(leg[a].osc[j].Yf[count]) +
+                       ch_max(leg[aaaaa].osc[j].Yf[count])))) /
+              t1;
+
+          leg[i].osc[j].Uf[count + 1] =
+              leg[i].osc[j].Uf[count] + (step_long * leg[i].osc[j].dUf[count]);
+          leg[i].osc[j].Yf[count + 1] = max(0.00, leg[i].osc[j].Uf[count + 1]);
+
+          leg[i].osc[j].dVf[count] =
+              (-leg[i].osc[j].Vf[count] + leg[i].osc[j].Yf[count + 1]) / t2;
+          leg[i].osc[j].Vf[count + 1] =
+              leg[i].osc[j].Vf[count] + (step_long * leg[i].osc[j].dVf[count]);
+
+          leg[i].osc[j].Y[count] =
+              leg[i].osc[j].Yf[count] - leg[i].osc[j].Ye[count];
+          leg[i].deep[count] =
+              (leg[i].osc[4].Y[count] - leg[i].osc[2].Y[count]);
+        }
+
+        if (i == 1) {
+          if (j == 4) {
+            fprintf(deep1, "%f\n", leg[i].deep[count]);
+          }
+          if (j == 4) {
+            fprintf(Y14, "%f\n", leg[i].osc[j].Y[count]);
+          }
+          if (j == 2) {
+            fprintf(Y12, "%f\n", leg[i].osc[2].Y[count]);
+          }
+        }
+      }
+    }
+
+    if (count > 100) {
+      cal_out_3_walk(count);
+    }
+  }
+
+  void cal_out_3_walk(int num_count) {
+    if (leg[2].osc[3].Y[num_count] < 0) {
+      leg[2].osc[3].Y[num_count] = 0;
+    }
+    if (leg[5].osc[3].Y[num_count] < 0) {
+      leg[5].osc[3].Y[num_count] = 0;
+    }
+    for (int j = 1; j <= 6; ++j) {
+      leg[j].osc[2].Y[num_count] =
+          leg[j].osc[2].Y[num_count] * CPG_Scale_Factor;
+      if (leg[j].osc[2].Y[num_count] < 0) {
+        leg[j].osc[2].Y[num_count] = 0;
+      }
+      if (j <= 3) {
+        leg[j].osc[2].Y[num_count] = -leg[j].osc[2].Y[num_count];
+        leg[j].osc[3].Y[num_count] = -leg[j].osc[3].Y[num_count];
+      } else {
+        leg[j].osc[1].Y[num_count] = -leg[j].osc[1].Y[num_count];
+      }
+    }
+    leg[1].osc[3].Y[num_count] = -leg[1].osc[3].Y[num_count];
+    leg[6].osc[3].Y[num_count] = -leg[6].osc[3].Y[num_count];
+
+    reduce_by_min_135 = 0;
+    reduce_by_min_246 = 0;
+    change = 0;
+
+    for (int j = 1; j <= 6; j++) {
+      leg[j].height[num_count] = leg[j].height[num_count - 1];
+      number[j] = fabs(leg[j].height[num_count]);
+    }
+
+    // 奇數腳排序
+    for (int a = 1; a <= 5; a = a + 2) {
+      for (int b = a; b <= 5; b = b + 2) {
+        if (number[b] > number[a]) {
+          temp = number[b];
+          number[b] = number[a];
+          number[a] = temp;
+        }
+      }
+    }
+    // 偶數腳排序
+    for (int a = 2; a <= 6; a = a + 2) {
+      for (int b = a; b <= 6; b = b + 2) {
+        if (number[b] > number[a]) {
+          temp = number[b];
+          number[b] = number[a];
+          number[a] = temp;
+        }
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // i 到 j 的對應查表（原本用 if/else 判斷）
+    // i=0->j=1, i=3->j=2, i=6->j=3 (右側腳群, osc[2].Y < 0 為動作相)
+    // i=9->j=6, i=12->j=5, i=15->j=4 (左側腳群, osc[2].Y > 0 為動作相)
+    // -----------------------------------------------------------------------
+    // 右側腳群 leg 1~3（osc[2].Y < 0 為動作相，輸出為負值）
+    static const int right_j[3] = {1, 2, 3};  // i=0,3,6 對應
+    for (int idx = 0; idx < 3; idx++) {
+      int j = right_j[idx];
+
+      if (leg[j].osc[2].Y[num_count] < 0) {
+        // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "ww=%d", leg[j].ww);
+        if (leg[j].ww == 1) {  // when switch in this condition(>0), use number of "no" to
+                               // judge if it's success in adjust or not
+          if (leg[j].no >= 10) {
+            judge[j] = 1;  // adjust success
+            leg[j].no = 0;
+            leg[j].ww = 2;
+          } else {
+            judge[j] = 2;  // adjust failed
+            leg[j].ww = 2;
+            leg[j].no = 0;
+            leg[j].height[num_count - 1] = 0;  // reset the height
+          }
+        }
+
+        //--------inorder to make the robot smoothly
+        leg[j].height[num_count] = leg[j].height[num_count - 1];
+        kkk[j]++;  // kkk++ then kkk==1
+        if (kkk[j] != 2) {  // consider when it adjust success(height > 0), we
+                             // dont want the leg go back to 0 then go to height
+          if (leg[j].osc[2].Y[num_count] > leg[j].height[num_count]) {  // if the wave < height, then stop
+                                                                         // at height till wave > height
+            h[j] = leg[j].height[num_count];
+            kkk[j] = 0;
+          } else {  // now is the moment that wave > height
+            h[j] = leg[j].osc[2].Y[num_count];
+            kkk[j] = 1;
+          }
+        } else {
+          if (leg[j].osc[2].Y[num_count] < leg[j].height[num_count]) {
+            h[j] = leg[j].osc[2].Y[num_count];
+          } else {  // when the wave go back lower, we dont want the leg
+                    // follow the wave while wave < height(stays at height)
+            h[j] = leg[j].height[num_count];
+          }
+          kkk[j] = 1;
+        }
+        //--------inorder to make the robot smoothly
+        leg[j].clad = 1;  // count of ladder
+
+      } else {  // leg[j].osc[2].Y[num_count] >= 0
+        leg[j].height[num_count] = leg[j].height[num_count - 1];
+
+        if (judge[j] == 1) {  // no need to adjust, use last time's height
+          if (j == 1 || j == 3) {
+            if (number[5] >= 0) {
+              h[j] = leg[j].height[num_count] + number[5];
+              printf("out[%d]=%lf - NNNNNNNNNNNNNN\t", j,
+                     leg[j].height[num_count] + number[5]);
+            } else {
+              h[j] = leg[j].height[num_count] - number[5];
+              printf("out[%d]=%lf - NNNNNNNNNNNNNN\t", j,
+                     leg[j].height[num_count] - number[5]);
+            }
+          } else {
+            if (number[6] >= 0) {
+              h[j] = leg[j].height[num_count] + number[6];
+              printf("out[%d]=%lf - NNNNNNNNNNNNNN\t", j,
+                     leg[j].height[num_count] + number[6]);
+            } else {
+              h[j] = leg[j].height[num_count] - number[6];
+              printf("out[%d]=%lf - NNNNNNNNNNNNNN\t", j,
+                     leg[j].height[num_count] - number[6]);
+            }
+          }
+        } else if (judge[j] == 2) {  // need to adjust again
+          if (leg[j].deep[num_count] * leg[j].lpara +
+                  (leg[j].deep[num_count] - leg[j].deep[num_count - 1]) *
+                      leg[j].lpara2 <=
+              leg[j].out[num_count - 1]) {
+            leg[j].out[num_count] =
+                leg[j].deep[num_count] * leg[j].lpara +
+                (leg[j].deep[num_count] - leg[j].deep[num_count - 1]) *
+                    leg[j].lpara2;
+          } else {
+            leg[j].out[num_count] = leg[j].out[num_count - 1];
+          }
+
+          if (isBalanced) {
+            leg[j].out[num_count - 1] = leg[j].ttemp;
+            leg[j].out[num_count] = leg[j].out[num_count - 1];
+          }
+          leg[j].out[num_count] = std::clamp(
+              leg[j].out[num_count], -limit_knee_output, limit_knee_output);
+          leg[j].height[num_count] = leg[j].out[num_count];
+
+          // 使用統一的 clad 階梯函式（sign=-1 代表右側腳，輸出為負值）
+          apply_clad_ladder(j, num_count, -1);
+
+          if (j == 1 || j == 3) {
+            reduce_by_min_135 = 1;
+          } else {
+            reduce_by_min_246 = 1;
+          }
+          kkk[j] = 0;
+        }
+
+        pi[j] = pitch;
+        ro[j] = roll;
+        if (isBalanced) {  // no need to adjust
+          leg[j].no++;
+        }
+        leg[j].ww = 1;
+        kkk[j] = 0;
+      }
+    }
+
+    // 左側腳群 leg 4~6（osc[2].Y > 0 為動作相，輸出為正值）
+    static const int left_j[3] = {6, 5, 4};  // i=9,12,15 對應
+    for (int idx = 0; idx < 3; idx++) {
+      int j = left_j[idx];
+
+      if (leg[j].osc[2].Y[num_count] > 0) {
+        // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "ww=%d", leg[j].ww);
+        if (leg[j].ww == 1) {
+          if (leg[j].no >= 10) {
+            judge[j] = 1;  // adjust success
+            leg[j].no = 0;
+            leg[j].ww = 2;
+          } else {
+            judge[j] = 2;  // adjust failed
+            leg[j].ww = 2;
+            leg[j].no = 0;
+            leg[j].height[num_count - 1] = 0;  // reset the height
+          }
+        }
+
+        //--------inorder to make the robot smoothly
+        leg[j].height[num_count] = leg[j].height[num_count - 1];
+        kkk[j]++;
+        if (kkk[j] != 2) {
+          if (leg[j].osc[2].Y[num_count] < leg[j].height[num_count]) {
+            h[j] = leg[j].height[num_count];
+            kkk[j] = 0;
+          } else {
+            h[j] = leg[j].osc[2].Y[num_count];
+            kkk[j] = 1;
+          }
+        } else {
+          if (leg[j].osc[2].Y[num_count] > leg[j].height[num_count]) {
+            h[j] = leg[j].osc[2].Y[num_count];
+          } else {  // when the wave go back lower, we dont want the leg
+                    // follow the wave while wave < height(stays at height)
+            h[j] = leg[j].height[num_count];
+          }
+          kkk[j] = 1;
+        }
+        //--------inorder to make the robot smoothly
+        leg[j].clad = 1;  // count of ladder
+
+      } else {  // leg[j].osc[2].Y[num_count] <= 0
+        leg[j].height[num_count] = leg[j].height[num_count - 1];
+
+        if (judge[j] == 1) {  // no need to adjust, use last time's height
+          if (j == 5) {
+            if (number[5] >= 0) {
+              h[j] = leg[j].height[num_count] - number[5];
+              printf("out[%d]=%lf - NNNNNNNNNNNNNN\t", j,
+                     leg[j].height[num_count] - number[5]);
+            } else {
+              h[j] = leg[j].height[num_count] + number[5];
+              printf("out[%d]=%lf - NNNNNNNNNNNNNN\t", j,
+                     leg[j].height[num_count] + number[5]);
+            }
+          } else {
+            if (number[6] >= 0) {
+              h[j] = leg[j].height[num_count] - number[6];
+              printf("out[%d]=%lf - NNNNNNNNNNNNNN\t", j,
+                     leg[j].height[num_count] - number[6]);
+            } else {
+              h[j] = leg[j].height[num_count] + number[6];
+              printf("out[%d]=%lf - NNNNNNNNNNNNNN\t", j,
+                     leg[j].height[num_count] + number[6]);
+            }
+          }
+        } else if (judge[j] == 2) {  // start to adjust
+          if (leg[j].deep[num_count] * leg[j].lpara +
+                  (leg[j].deep[num_count] - leg[j].deep[num_count - 1]) *
+                      leg[j].lpara2 >=
+              leg[j].out[num_count - 1]) {
+            leg[j].out[num_count] =
+                leg[j].deep[num_count] * leg[j].lpara +
+                (leg[j].deep[num_count] - leg[j].deep[num_count - 1]) *
+                    leg[j].lpara2;
+          } else {
+            leg[j].out[num_count] = leg[j].out[num_count - 1];
+          }
+
+          if (isBalanced) {
+            leg[j].out[num_count - 1] = leg[j].ttemp;
+            leg[j].out[num_count] = leg[j].out[num_count - 1];
+          }
+          leg[j].out[num_count] = std::clamp(
+              leg[j].out[num_count], -limit_knee_output, limit_knee_output);
+          leg[j].height[num_count] = leg[j].out[num_count];
+
+          // 使用統一的 clad 階梯函式（sign=+1 代表左側腳，輸出為正值）
+          apply_clad_ladder(j, num_count, +1);
+
+          if (j == 5) {
+            reduce_by_min_135 = 1;
+          } else {
+            reduce_by_min_246 = 1;
+          }
+          kkk[j] = 0;
+        }
+
+        pi[j] = pitch;
+        ro[j] = roll;
+        if (isBalanced) {  // no need to adjust
+          leg[j].no++;
+        }
+        leg[j].ww = 1;
+        kkk[j] = 0;
+      }
+    }
+  }
+
+ private:
+  rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_;
+  rclcpp::Service<interfaces::srv::CommandAdaption>::SharedPtr service_;
+};
+
+int main(int argc, char** argv) {
+  init_cpg();
+  open_log_files();
+  rclcpp::init(argc, argv);
+  adaption_node adap;
+  auto node = std::make_shared<adaption_node>();
+
+  rclcpp::spin(node);
+  rclcpp::shutdown();
+  close_log_files();
+
+  return 0;
+}
+
+const char* base_path = "/home/user/ros2_obf_ws/src/cpg";
+const char* folder_name = "knee_high_3";  // <-- 修改這裡即可切換資料夾
+char full_path_buf[256];                  // 共用緩衝區
+
+#define MAKE_PATH(filename)                                              \
+  (snprintf(full_path_buf, sizeof(full_path_buf), "%s/%s/%s", base_path, \
+            folder_name, filename),                                      \
+   full_path_buf)
+
+void load_cpg(void) {
+  FILE* YYout11 = fopen(MAKE_PATH("YYout11.txt"), "r");
+  FILE* YYout21 = fopen(MAKE_PATH("YYout21.txt"), "r");
+  FILE* YYout31 = fopen(MAKE_PATH("YYout31.txt"), "r");
+  FILE* YYout41 = fopen(MAKE_PATH("YYout41.txt"), "r");
+  FILE* YYout51 = fopen(MAKE_PATH("YYout51.txt"), "r");
+  FILE* YYout61 = fopen(MAKE_PATH("YYout61.txt"), "r");
+
+  FILE* YYout12 = fopen(MAKE_PATH("YYout12.txt"), "r");
+  FILE* YYout22 = fopen(MAKE_PATH("YYout22.txt"), "r");
+  FILE* YYout32 = fopen(MAKE_PATH("YYout32.txt"), "r");
+  FILE* YYout42 = fopen(MAKE_PATH("YYout42.txt"), "r");
+  FILE* YYout52 = fopen(MAKE_PATH("YYout52.txt"), "r");
+  FILE* YYout62 = fopen(MAKE_PATH("YYout62.txt"), "r");
+
+  FILE* YYout13 = fopen(MAKE_PATH("YYout13.txt"), "r");
+  FILE* YYout23 = fopen(MAKE_PATH("YYout23.txt"), "r");
+  FILE* YYout33 = fopen(MAKE_PATH("YYout33.txt"), "r");
+  FILE* YYout43 = fopen(MAKE_PATH("YYout43.txt"), "r");
+  FILE* YYout53 = fopen(MAKE_PATH("YYout53.txt"), "r");
+  FILE* YYout63 = fopen(MAKE_PATH("YYout63.txt"), "r");
+
+  for (int count = 1; count <= _Maxstep; count++) {
+    fscanf(YYout11, "%lf\n", &(leg[1].osc[1].Y[count]));
+    fscanf(YYout12, "%lf\n", &(leg[1].osc[2].Y[count]));
+    fscanf(YYout13, "%lf\n", &(leg[1].osc[3].Y[count]));
+
+    fscanf(YYout21, "%lf\n", &(leg[2].osc[1].Y[count]));
+    fscanf(YYout22, "%lf\n", &(leg[2].osc[2].Y[count]));
+    fscanf(YYout23, "%lf\n", &(leg[2].osc[3].Y[count]));
+
+    fscanf(YYout31, "%lf\n", &(leg[3].osc[1].Y[count]));
+    fscanf(YYout32, "%lf\n", &(leg[3].osc[2].Y[count]));
+    fscanf(YYout33, "%lf\n", &(leg[3].osc[3].Y[count]));
+
+    fscanf(YYout41, "%lf\n", &(leg[4].osc[1].Y[count]));
+    fscanf(YYout42, "%lf\n", &(leg[4].osc[2].Y[count]));
+    fscanf(YYout43, "%lf\n", &(leg[4].osc[3].Y[count]));
+
+    fscanf(YYout51, "%lf\n", &(leg[5].osc[1].Y[count]));
+    fscanf(YYout52, "%lf\n", &(leg[5].osc[2].Y[count]));
+    fscanf(YYout53, "%lf\n", &(leg[5].osc[3].Y[count]));
+
+    fscanf(YYout61, "%lf\n", &(leg[6].osc[1].Y[count]));
+    fscanf(YYout62, "%lf\n", &(leg[6].osc[2].Y[count]));
+    fscanf(YYout63, "%lf\n", &(leg[6].osc[3].Y[count]));
+  }
+
+  fclose(YYout11); fclose(YYout21); fclose(YYout31);
+  fclose(YYout41); fclose(YYout51); fclose(YYout61);
+  fclose(YYout12); fclose(YYout22); fclose(YYout32);
+  fclose(YYout42); fclose(YYout52); fclose(YYout62);
+  fclose(YYout13); fclose(YYout23); fclose(YYout33);
+  fclose(YYout43); fclose(YYout53); fclose(YYout63);
+}
+
+void init_cpg() {
+  RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "init_cpg");
+  for (int i = 1; i <= 6; i++) {
+    for (int j = 1; j <= 4; j++) {
+      for (int k = 0; k <= _Maxstep; k++) {
+        leg[i].osc[j].dUe[k] = 0;
+        leg[i].osc[j].Ue[k] = 0;
+        leg[i].osc[j].dUf[k] = 0;
+        leg[i].osc[j].Uf[k] = 0;
+        leg[i].osc[j].dVe[k] = 0;
+        leg[i].osc[j].Ve[k] = 0;
+        leg[i].osc[j].dVf[k] = 0;
+        leg[i].osc[j].Vf[k] = 0;
+        leg[i].osc[j].Ye[k] = 0;
+        leg[i].osc[j].Yf[k] = 0;
+        leg[i].osc[j].Y[k] = 0;
+      }
+    }
+  }
+
+  srand(time(NULL));
+  // 給初值，一定要給，每個振盪器初始值都要不同，且同個振盪器Uf和Vf不能一樣，同隻腳的也不能一樣
+  // 原本是用隨機的，這裡因為要使輸出訊號固定，所以改成直接指定
+  double Uf_values[24] = {0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08,
+                          0.09, 0.10, 0.11, 0.12, 0.13, 0.14, 0.15, 0.16,
+                          0.17, 0.18, 0.19, 0.20, 0.21, 0.22, 0.23, 0.24};
+  double Vf_values[24] = {0.025, 0.035, 0.045, 0.055, 0.065, 0.075,
+                          0.085, 0.095, 0.105, 0.115, 0.125, 0.135,
+                          0.145, 0.155, 0.165, 0.175, 0.185, 0.195,
+                          0.205, 0.215, 0.225, 0.235, 0.245, 0.255};
+  int index = 0;
+  for (int i = 1; i <= 6; i++) {
+    for (int j = 1; j <= 4; j++) {
+      leg[i].osc[j].Ue[1] = 0;
+      leg[i].osc[j].Ve[1] = 0;
+      leg[i].osc[j].Uf[1] = Uf_values[index];
+      leg[i].osc[j].Vf[1] = Vf_values[index];
+      index++;
+    }
+  }
+}
+
+void turn(int num_count) {
+  for (int i = 0; i <= num_count; ++i) {
+    if (leg[2].osc[3].Y[i] < 0) leg[2].osc[3].Y[i] = 0;
+    if (leg[5].osc[3].Y[i] < 0) leg[5].osc[3].Y[i] = 0;
+    for (int j = 1; j <= 6; ++j) {
+      if (leg[j].osc[2].Y[i] < 0) leg[j].osc[2].Y[i] = 0;
+      if (j <= 3) {
+        leg[j].osc[2].Y[i] = -leg[j].osc[2].Y[i];
+        leg[j].osc[3].Y[i] = -leg[j].osc[3].Y[i];
+      } else {
+        leg[j].osc[1].Y[i] = -leg[j].osc[1].Y[i];
+      }
+    }
+    leg[1].osc[3].Y[i] = -leg[1].osc[3].Y[i];
+    leg[6].osc[3].Y[i] = -leg[6].osc[3].Y[i];
+  }
+}
+
+void open_log_files() {
+  pitch_data =
+      fopen("/home/user/ros2_obf_ws/src/sensor_data/pitch_data.txt", "a");
+  if (!pitch_data) perror("Failed to open log files:pitch_data.txt");
+
+  roll_data =
+      fopen("/home/user/ros2_obf_ws/src/sensor_data/roll_data.txt", "a");
+  if (!pitch_data) perror("Failed to open log files:roll_data.txt");
+
+  deep1 = fopen("/home/user/ros2_obf_ws/src/sensor_data/deep1.txt", "a");
+  if (!deep1) perror("Failed to open log files:deep1.txt");
+
+  h1 = fopen("/home/user/ros2_obf_ws/src/sensor_data/h1.txt", "a");
+  if (!h1) perror("Failed to open log files:h1.txt");
+
+  Y14 = fopen("/home/user/ros2_obf_ws/src/sensor_data/Y14.txt", "a");
+  if (!Y14) perror("Failed to open log files:Y14.txt");
+
+  Y12 = fopen("/home/user/ros2_obf_ws/src/sensor_data/Y12.txt", "a");
+  if (!Y12) perror("Failed to open log files:Y12.txt");
+}
+
+void close_log_files() {
+  if (pitch_data) fclose(pitch_data);
+  if (roll_data)  fclose(roll_data);
+  if (deep1)      fclose(deep1);
+  if (h1)         fclose(h1);
+  if (Y12)        fclose(Y12);
+  if (Y14)        fclose(Y14);
+}

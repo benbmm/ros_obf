@@ -27,12 +27,12 @@ void close_log_files();
 
 double ch_max(double);
 // 檔案指標設為全域變數
-FILE *deep1 = NULL;
-FILE *h1 = NULL;
-FILE *pitch_data = NULL;
-FILE *roll_data = NULL;
-FILE *Y14 = NULL;
-FILE *Y12 = NULL;
+FILE* deep1 = NULL;
+FILE* h1 = NULL;
+FILE* pitch_data = NULL;
+FILE* roll_data = NULL;
+FILE* Y14 = NULL;
+FILE* Y12 = NULL;
 
 // 將膝關節的控制值限制在0.5以下
 #define limit_knee_output 1.0
@@ -43,14 +43,15 @@ FILE *Y12 = NULL;
 #define _count 1000
 #define NUM_SERVOS 18
 
-const char *SERVOS[NUM_SERVOS] = {"R00", "R01", "R02", "R10", "R11", "R12",
+const char* SERVOS[NUM_SERVOS] = {"R00", "R01", "R02", "R10", "R11", "R12",
                                   "R20", "R21", "R22", "L00", "L01", "L02",
                                   "L10", "L11", "L12", "L20", "L21", "L22"};
 int k = 0;
 int kk = 0, kkk[7] = {0}, aaa[7] = {0}, judge[7] = {0, 2, 2, 2, 2, 2, 2},
     cc[7] = {0};
 double pi[7] = {0}, ro[7] = {0},
-       ladder[13] = {0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6,0.7,0.8,0.9,1.0,1.1,1.2};
+       ladder[13] = {0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6,
+                     0.7, 0.8, 0.9, 1.0, 1.1, 1.2};
 
 double thres = 0.03;
 int isBalanced;
@@ -717,8 +718,8 @@ class adaption_node : public rclcpp::Node {
             } /* else if (leg[j].out[num_count] <= -0.6) {
               leg[j].out[num_count] = -0.6;
             } */
-            leg[j].out[num_count] =
-                std::clamp(leg[j].out[num_count], -limit_knee_output, limit_knee_output);
+            leg[j].out[num_count] = std::clamp(
+                leg[j].out[num_count], -limit_knee_output, limit_knee_output);
             // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
             // "fin.leg[%d].out[%d]=%f",j,num_count,leg[j].out[num_count]);
             leg[j].height[num_count] = leg[j].out[num_count];
@@ -1053,8 +1054,8 @@ class adaption_node : public rclcpp::Node {
             } /* else if (leg[j].out[num_count] >= 0.6) {
               leg[j].out[num_count] = 0.6;
             } */
-            leg[j].out[num_count] =
-                std::clamp(leg[j].out[num_count], -limit_knee_output, limit_knee_output);
+            leg[j].out[num_count] = std::clamp(
+                leg[j].out[num_count], -limit_knee_output, limit_knee_output);
             // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
             // "fin,leg[%d].out[%d]=%f",j,num_count,leg[j].out[num_count]);
 
@@ -1264,7 +1265,7 @@ class adaption_node : public rclcpp::Node {
   rclcpp::Service<interfaces::srv::CommandAdaption>::SharedPtr service_;
 };
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
   init_cpg();
   // load_cpg();
   open_log_files();
@@ -1279,10 +1280,10 @@ int main(int argc, char **argv) {
   return 0;
 }
 
-const char *base_path = "/home/user/ros2_obf_ws/src/cpg";
+const char* base_path = "/home/user/ros2_obf_ws/src/cpg";
 // fixed_cpg
 // knee_high_3
-const char *folder_name = "knee_high_3";  // <-- 修改這裡即可切換資料夾
+const char* folder_name = "knee_high_3";  // <-- 修改這裡即可切換資料夾
 char full_path_buf[256];                  // 共用緩衝區
 
 #define MAKE_PATH(filename)                                              \
@@ -1291,26 +1292,26 @@ char full_path_buf[256];                  // 共用緩衝區
    full_path_buf)
 
 void load_cpg(void) {
-  FILE *YYout11 = fopen(MAKE_PATH("YYout11.txt"), "r");
-  FILE *YYout21 = fopen(MAKE_PATH("YYout21.txt"), "r");
-  FILE *YYout31 = fopen(MAKE_PATH("YYout31.txt"), "r");
-  FILE *YYout41 = fopen(MAKE_PATH("YYout41.txt"), "r");
-  FILE *YYout51 = fopen(MAKE_PATH("YYout51.txt"), "r");
-  FILE *YYout61 = fopen(MAKE_PATH("YYout61.txt"), "r");
+  FILE* YYout11 = fopen(MAKE_PATH("YYout11.txt"), "r");
+  FILE* YYout21 = fopen(MAKE_PATH("YYout21.txt"), "r");
+  FILE* YYout31 = fopen(MAKE_PATH("YYout31.txt"), "r");
+  FILE* YYout41 = fopen(MAKE_PATH("YYout41.txt"), "r");
+  FILE* YYout51 = fopen(MAKE_PATH("YYout51.txt"), "r");
+  FILE* YYout61 = fopen(MAKE_PATH("YYout61.txt"), "r");
 
-  FILE *YYout12 = fopen(MAKE_PATH("YYout12.txt"), "r");
-  FILE *YYout22 = fopen(MAKE_PATH("YYout22.txt"), "r");
-  FILE *YYout32 = fopen(MAKE_PATH("YYout32.txt"), "r");
-  FILE *YYout42 = fopen(MAKE_PATH("YYout42.txt"), "r");
-  FILE *YYout52 = fopen(MAKE_PATH("YYout52.txt"), "r");
-  FILE *YYout62 = fopen(MAKE_PATH("YYout62.txt"), "r");
+  FILE* YYout12 = fopen(MAKE_PATH("YYout12.txt"), "r");
+  FILE* YYout22 = fopen(MAKE_PATH("YYout22.txt"), "r");
+  FILE* YYout32 = fopen(MAKE_PATH("YYout32.txt"), "r");
+  FILE* YYout42 = fopen(MAKE_PATH("YYout42.txt"), "r");
+  FILE* YYout52 = fopen(MAKE_PATH("YYout52.txt"), "r");
+  FILE* YYout62 = fopen(MAKE_PATH("YYout62.txt"), "r");
 
-  FILE *YYout13 = fopen(MAKE_PATH("YYout13.txt"), "r");
-  FILE *YYout23 = fopen(MAKE_PATH("YYout23.txt"), "r");
-  FILE *YYout33 = fopen(MAKE_PATH("YYout33.txt"), "r");
-  FILE *YYout43 = fopen(MAKE_PATH("YYout43.txt"), "r");
-  FILE *YYout53 = fopen(MAKE_PATH("YYout53.txt"), "r");
-  FILE *YYout63 = fopen(MAKE_PATH("YYout63.txt"), "r");
+  FILE* YYout13 = fopen(MAKE_PATH("YYout13.txt"), "r");
+  FILE* YYout23 = fopen(MAKE_PATH("YYout23.txt"), "r");
+  FILE* YYout33 = fopen(MAKE_PATH("YYout33.txt"), "r");
+  FILE* YYout43 = fopen(MAKE_PATH("YYout43.txt"), "r");
+  FILE* YYout53 = fopen(MAKE_PATH("YYout53.txt"), "r");
+  FILE* YYout63 = fopen(MAKE_PATH("YYout63.txt"), "r");
 
   for (int count = 1; count <= _Maxstep; count++) {
     fscanf(YYout11, "%lf\n", &(leg[1].osc[1].Y[count]));
