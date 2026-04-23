@@ -1,348 +1,1474 @@
-"""
-膝關節控制器 ROS2 節點（主節點）
-
-功能:
-    訂閱 /imu_data 與 /timestep，每收到一次 /timestep 即執行一次推論，
-    將 6 維膝關節修正量（rl_corrections, 範圍 0~0.7）發布至 /knee_action。
-
-本檔案整合以下邏輯:
-    1. CPG 資料讀取（純浮點數一行一數）
-    2. 四元數 → roll/pitch 轉換 + 6 維 IMU 狀態展開
-    3. skrl PPOWithPredictor agent 載入
-    4. ROS2 節點主體（兩個 callback + 推論主迴圈）
-"""
-
-import math
-from typing import Tuple
-from scipy.spatial.transform import Rotation
-
-import numpy as np
-import torch
-from gymnasium.spaces import Box
-
-import rclpy
-from rclpy.node import Node
-from sensor_msgs.msg import Imu
-from interfaces.msg import KneeAction
-
-# skrl
-from skrl.agents.torch.ppo import PPO_DEFAULT_CONFIG
-from skrl.memories.torch import RandomMemory
-from skrl.resources.preprocessors.torch import RunningStandardScaler
-from skrl.resources.schedulers.torch import KLAdaptiveRL
-
-# 自訂模型與 Agent（使用者需保證這兩個檔案在 PYTHONPATH 可存取）
-from transformer_models import PPOModel
-from custom_ppo_agent import PPOWithPredictor
-
-# 本專案
-from node_config import NodeConfig
-
-
-# =============================================================================
-# 1. CPG 檔案載入
-# =============================================================================
-
-def load_cpg_l0_hip(file_path: str, device: torch.device) -> torch.Tensor:
-    """
-    讀取純浮點數檔案，每行一個 float。
-
-    Args:
-        file_path: YYout11.txt 的絕對路徑（L0 腿髖關節訊號）
-        device: 資料要放置的 torch device
-
-    Returns:
-        cpg_tensor: (max_steps,) 一維 tensor
-    """
-    values = []
-    with open(file_path, "r") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            values.append(float(line))
-
-    if len(values) == 0:
-        raise RuntimeError(f"CPG 檔案為空: {file_path}")
-
-    cpg_tensor = torch.tensor(values, dtype=torch.float32, device=device)
-    return cpg_tensor
-
-
-# =============================================================================
-# 2. IMU 工具
-# =============================================================================
-
-def calculate_imu_states(roll: float, pitch: float, device: torch.device) -> torch.Tensor:
-    """
-    將 roll/pitch 展開為 6 維 IMU 狀態（與訓練環境 _calculate_imu_states 完全一致）。
-
-    Returns:
-        imu_states: (6,) tensor on device
-    """
-    sqrt_half = math.sqrt(0.5)
-    imu_states = [
-        (-pitch - roll) * sqrt_half,   # [0]
-        -roll,                         # [1]
-        (pitch - roll) * sqrt_half,    # [2]
-        (pitch + roll) * sqrt_half,    # [3]
-        roll,                          # [4]
-        (-pitch + roll) * sqrt_half,   # [5]
-    ]
-    return torch.tensor(imu_states, dtype=torch.float32, device=device)
-
-
-# =============================================================================
-# 3. skrl Agent 載入
-# =============================================================================
-
-def load_agent(cfg: NodeConfig, device: torch.device) -> PPOWithPredictor:
-    """
-    建立 PPOModel + PPOWithPredictor agent，載入 checkpoint，設為 eval 模式。
-
-    流程與 play_transformer.py 一致：
-        1. 以 NodeConfig 超參數建立 PPOModel
-        2. 建 dummy RandomMemory（推理不會用到，但 agent.init 需要）
-        3. 組裝 PPO config dict（含 RunningStandardScaler 設定）
-        4. 建 PPOWithPredictor
-        5. agent.load(checkpoint)  ← 一併載入 scaler 統計量
-        6. agent.set_running_mode("eval")
-    """
-    flat_obs_dim = cfg.TOTAL_SEQ_LEN * cfg.FEATURE_DIM  # 20 * 16 = 320
-
-    # --- Dummy gym spaces（沒有真實 env，手動造）---
-    observation_space = Box(
-        low=-np.inf, high=np.inf, shape=(flat_obs_dim,), dtype=np.float32
-    )
-    action_space = Box(
-        low=-1.0, high=1.0, shape=(cfg.ACTION_DIM,), dtype=np.float32
-    )
-
-    # --- 建 PPOModel ---
-    # normalize_input=False 因為 Stage 2 由外層 RunningStandardScaler 負責
-    model = PPOModel(
-        observation_space=observation_space,
-        action_space=action_space,
-        device=device,
-        clip_actions=cfg.CLIP_ACTIONS,
-        clip_log_std=cfg.CLIP_LOG_STD,
-        min_log_std=cfg.MIN_LOG_STD,
-        max_log_std=cfg.MAX_LOG_STD,
-        reduction=cfg.REDUCTION,
-        d_model=cfg.D_MODEL,
-        nhead=cfg.NHEAD,
-        num_encoder_layers=cfg.NUM_ENCODER_LAYERS,
-        dim_feedforward=cfg.DIM_FEEDFORWARD,
-        total_seq_len=cfg.TOTAL_SEQ_LEN,
-        feature_dim=cfg.FEATURE_DIM,
-        predictor_output_dim=cfg.PREDICTOR_OUTPUT_DIM,
-        normalize_input=False,
-    )
-
-    # Policy 與 Value 共用同一個 PPOModel 實例
-    models = {"policy": model, "value": model}
-
-    # --- Dummy memory（推理用不到）---
-    memory = RandomMemory(memory_size=16, num_envs=1, device=device)
-
-    # --- PPO config（只設載入 checkpoint 必要的欄位）---
-    ppo_cfg = PPO_DEFAULT_CONFIG.copy()
-    ppo_cfg["state_preprocessor"] = RunningStandardScaler
-    ppo_cfg["value_preprocessor"] = RunningStandardScaler
-    ppo_cfg["state_preprocessor_kwargs"] = {"size": observation_space, "device": device}
-    ppo_cfg["value_preprocessor_kwargs"] = {"size": 1, "device": device}
-    ppo_cfg["learning_rate_scheduler"] = KLAdaptiveRL
-    ppo_cfg["learning_rate_scheduler_kwargs"] = {}
-    ppo_cfg["experiment"]["write_interval"] = 0
-    ppo_cfg["experiment"]["checkpoint_interval"] = 0
-
-    # --- 建 PPOWithPredictor ---
-    # predictor_loss_weight / backbone_freeze_timesteps 對 eval 不影響，給預設值即可
-    agent = PPOWithPredictor(
-        models=models,
-        memory=memory,
-        cfg=ppo_cfg,
-        observation_space=observation_space,
-        action_space=action_space,
-        device=device,
-        predictor_loss_weight=0.001,
-        predictor_target_dim=cfg.PREDICTOR_OUTPUT_DIM,
-        total_seq_len=cfg.TOTAL_SEQ_LEN,
-        feature_dim=cfg.FEATURE_DIM,
-        backbone_freeze_timesteps=0,
-    )
-
-    # --- 載入 checkpoint ---
-    agent.load(cfg.CHECKPOINT_PATH)
-
-    # --- 設為 eval 模式 ---
-    agent.set_running_mode("eval")
-
-    return agent
-
-
-# =============================================================================
-# 4. ROS2 節點主體
-# =============================================================================
-
-class KneeControllerNode(Node):
-    """
-    單執行緒 ROS2 節點。
-    - /imu_data  callback: 高頻，僅快取 roll/pitch/angular_velocity，不做推論。
-    - /timestep  callback: 觸發完整推論流程，發布 /knee_action。
-    """
-
-    def __init__(self):
-        super().__init__("knee_controller")
-
-        self.cfg = NodeConfig()
-        self.device = torch.device(self.cfg.DEVICE)
-
-        self.get_logger().info(f"Using device: {self.device}")
-
-        # ---- 1. 載入 CPG ----
-        self.get_logger().info(f"Loading CPG from: {self.cfg.CPG_FILE_PATH}")
-        self.cpg_l0_hip = load_cpg_l0_hip(self.cfg.CPG_FILE_PATH, self.device)
-        self.cpg_max_steps = self.cpg_l0_hip.shape[0]
-        self.get_logger().info(f"CPG loaded: {self.cpg_max_steps} steps")
-
-        # ---- 2. 載入 Agent ----
-        self.get_logger().info(f"Loading checkpoint: {self.cfg.CHECKPOINT_PATH}")
-        self.agent = load_agent(self.cfg, self.device)
-        self.get_logger().info("Agent loaded and set to eval mode")
-
-        # ---- 3. 初始化內部狀態 ----
-        # 環形 obs buffer: (100, 16)
-        self.obs_history = torch.zeros(
-            self.cfg.OBS_BUFFER_LENGTH, self.cfg.FEATURE_DIM, device=self.device
-        )
-
-        # last_action: 上一步 rl_corrections（已後處理，範圍 0~0.7）
-        self.last_action = torch.zeros(self.cfg.ACTION_DIM, device=self.device)
-
-        # IMU 快取
-        self.latest_roll: float = 0.0
-        self.latest_pitch: float = 0.0
-        self.latest_ang_vel: torch.Tensor = torch.zeros(3, device=self.device)
-
-        # 預先計算 stride-5 取樣的 indices: [4, 9, 14, ..., 99]
-        self._subsample_indices = torch.tensor(
-            [
-                self.cfg.OBS_SUBSAMPLE_STRIDE * (i + 1) - 1
-                for i in range(self.cfg.OBS_OUTPUT_SEQ_LEN)
-            ],
-            dtype=torch.long,
-            device=self.device,
-        )  # shape (20,)
-
-        # ---- 4. Publisher / Subscriber ----
-        self.publisher = self.create_publisher(
-            KneeAction, self.cfg.TOPIC_KNEE_ACTION, self.cfg.QOS_QUEUE_SIZE
-        )
-        self.create_subscription(
-            Imu,
-            self.cfg.TOPIC_IMU,
-            self.imu_callback,
-            self.cfg.QOS_QUEUE_SIZE,
-        )
-        self.create_subscription(
-            Int64,
-            self.cfg.TOPIC_TIMESTEP,
-            self.timestep_callback,
-            self.cfg.QOS_QUEUE_SIZE,
-        )
-
-        self.get_logger().info("KneeControllerNode ready.")
-
-    # -------------------------------------------------------------------------
-    # IMU callback — 純快取，不觸發推論
-    # -------------------------------------------------------------------------
-    def imu_callback(self, msg: Imu):
-        q = msg.orientation
-        roll, pitch, _ = Rotation.from_quat([q.x, q.y, q.z, q.w]).as_euler('xyz', degrees=False)
-        self.latest_roll = roll
-        self.latest_pitch = pitch
-
-        a = msg.angular_velocity
-        # 重用同一個 tensor，避免頻繁配置（可選：直接 new tensor 也可以）
-        self.latest_ang_vel = torch.tensor(
-            [a.x, a.y, a.z], dtype=torch.float32, device=self.device
-        )
-
-    # -------------------------------------------------------------------------
-    # Timestep callback — 觸發完整推論流程
-    # -------------------------------------------------------------------------
-    def timestep_callback(self, msg: Int64):
-        t = int(msg.data)
-
-        # 1. CPG scalar（L0 hip）
-        cpg_single = self.cpg_l0_hip[t % self.cpg_max_steps].unsqueeze(0)  # (1,)
-
-        # 2. 讀 IMU 快取
-        roll = self.latest_roll
-        pitch = self.latest_pitch
-        ang_vel = self.latest_ang_vel  # (3,)
-
-        # 3. 6 維 IMU 狀態
-        imu_states = calculate_imu_states(roll, pitch, self.device)  # (6,)
-
-        # 4. 組裝 current_obs (16,)
-        current_obs = torch.cat(
-            [
-                cpg_single,        # [0]     (1,)
-                self.last_action,  # [1:7]   (6,)
-                imu_states,        # [7:13]  (6,)
-                ang_vel,           # [13:16] (3,)
-            ]
-        )
-
-        # 5. 更新環形 buffer
-        self.obs_history = torch.roll(self.obs_history, shifts=-1, dims=0)
-        self.obs_history[-1] = current_obs
-
-        # 6. stride-5 取樣 → (20, 16)
-        obs_seq = self.obs_history[self._subsample_indices]
-
-        # 7. 展平 → (1, 320) 並做推論
-        flat_obs_dim = self.cfg.TOTAL_SEQ_LEN * self.cfg.FEATURE_DIM
-        obs_flat = obs_seq.reshape(1, flat_obs_dim)
-
-        with torch.inference_mode():
-            # agent.act 內部會套用 RunningStandardScaler
-            outputs = self.agent.act(obs_flat, timestep=0, timesteps=0)
-            raw_action = outputs[-1].get("mean_actions", outputs[0])  # (1, 6)
-        raw_action = raw_action.squeeze(0)  # (6,)
-
-        # 8. Action 後處理：clamp → 線性映射 → 縮放
-        action_clamped = torch.clamp(raw_action, -self.cfg.ACTION_CLIP, self.cfg.ACTION_CLIP)
-        rl_corrections = (action_clamped + 1.0) / 2.0 * self.cfg.ACTION_SCALE
-
-        # 9. 更新 last_action（存後處理後的值）
-        self.last_action = rl_corrections
-
-        # 10. 發布 /knee_action
-        data_list = rl_corrections.detach().cpu().tolist()
-        out_msg.header.stamp = self.get_clock().now().to_msg()
-        out_msg.corrections = data_list   # float32[6]
-        out_msg.timestep = t              # 對應的 timestep
-        self.publisher.publish(out_msg)
-
-
-# =============================================================================
-# 5. 進入點
-# =============================================================================
-
-def main(args=None):
-    rclpy.init(args=args)
-    node = KneeControllerNode()
-    try:
-        rclpy.spin(node)  # SingleThreadedExecutor 為預設
-    except KeyboardInterrupt:
-        pass
-    finally:
-        node.destroy_node()
-        rclpy.shutdown()
-
-
-if __name__ == "__main__":
-    main()
+// dev branch 是為了將判斷pitch
+// roll是否平穩條件變嚴苛，在deep的時候判斷是否穩定，晃動幅度底較大的腳就可以繼續控制
+#include <math.h>
+
+#include <algorithm>
+#include <cmath>
+#include <fstream>
+#include <iostream>
+#include <sstream>
+#include <string>
+#include <vector>
+
+// ROS2
+#include "interfaces/srv/command_adaption.hpp"
+#include "rclcpp/rclcpp.hpp"
+#include "sensor_msgs/msg/imu.hpp"
+#include "tf2/LinearMath/Matrix3x3.h"
+#include "tf2/LinearMath/Quaternion.h"
+
+void load_cpg(void);
+void init_cpg();
+void turn(int);
+void cal_out_3_sec(int);
+void cal_out_3_walk(int);
+void open_log_files();
+void close_log_files();
+
+double ch_max(double);
+// 檔案指標設為全域變數
+FILE* deep1 = NULL;
+FILE* h1 = NULL;
+FILE* pitch_data = NULL;
+FILE* roll_data = NULL;
+FILE* Y14 = NULL;
+FILE* Y12 = NULL;
+
+// 將膝關節的控制值限制在0.5以下
+#define limit_knee_output 1.0
+// 用來設定CPG訊號放大倍數
+#define CPG_Scale_Factor 1.5
+
+#define _Maxstep 40000
+#define _count 1000
+#define NUM_SERVOS 18
+
+const char* SERVOS[NUM_SERVOS] = {"R00", "R01", "R02", "R10", "R11", "R12",
+                                  "R20", "R21", "R22", "L00", "L01", "L02",
+                                  "L10", "L11", "L12", "L20", "L21", "L22"};
+int k = 0;
+int kk = 0, kkk[7] = {0}, aaa[7] = {0}, judge[7] = {0, 2, 2, 2, 2, 2, 2},
+    cc[7] = {0};
+double pi[7] = {0}, ro[7] = {0},
+       ladder[13] = {0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6,
+                     0.7, 0.8, 0.9, 1.0, 1.1, 1.2};
+
+double thres = 0.03;
+int isBalanced;
+
+double roll, pitch, yaw;
+double roll_temp, pitch_temp, yaw_temp;
+double e[7];  // 存roll, pitch在六個方向的分量
+double temp = 0, number[7] = {0};
+/* double kp[7] = {0, -14, -16.25, -14, 14, 16.25, 14};
+double kd[7] = {0, -0.2, -0.2, -0.2, 0.2, 0.2, 0.2};  */
+double kp[7] = {0, 14, 16.25, 14, -14, -16.25, -14};
+double kd[7] = {0, 0.2, 0.2, 0.2, -0.2, -0.2, -0.2};
+double h[7] = {0};
+// 當輸出的膝關節控制量發生變化，則change=1
+int change = 0;
+int reduce_by_min_135 = 0;
+int reduce_by_min_246 = 0;
+double min_abs_val;
+
+const double step_long = 0.2;
+const double Wfe = -1.5;  // Flexor&Extensor weight connection
+const double t1 = 0.5;    // orig = 1
+const double t2 = 7.5;    // orig = 15
+// const double U0 = 1.1;//3??????
+const double U0 = 1.3;  // 4??????
+const double b = 3;
+const double Wij = -1;
+
+using namespace std;
+
+class OSC {
+  friend class CPG;
+
+ public:
+  double dUe[_count + _Maxstep], dUf[_count + _Maxstep], dVe[_count + _Maxstep],
+      dVf[_count + _Maxstep];
+  double Ue[_count + _Maxstep], Uf[_count + _Maxstep], Ve[_count + _Maxstep],
+      Vf[_count + _Maxstep], Ye[_count + _Maxstep], Yf[_count + _Maxstep],
+      Y[_count + _Maxstep];
+};
+
+class CPG {
+  friend class OSC;
+
+ public:
+  OSC osc[4 + 1];
+  double deep[_Maxstep + 1];
+  double out[_Maxstep + 1];
+  double lpara, lpara2, height[_Maxstep + 1], ttemp = 0;
+  int clad = 1, no = 0, ww = 1;
+};
+
+CPG leg[6 + 1];
+
+class adaption_node : public rclcpp::Node {
+ public:
+  adaption_node() : Node("adaption_node") {
+    sub_ = this->create_subscription<sensor_msgs::msg::Imu>(
+        "/imu/data", 1,
+        std::bind(&adaption_node::callback, this, std::placeholders::_1));
+    service_ = this->create_service<interfaces::srv::CommandAdaption>(
+        "commandadaption",
+        std::bind(&adaption_node::Service_callback, this, std::placeholders::_1,
+                  std::placeholders::_2));
+
+    RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "adaption_node ok");
+  }
+  void callback(const sensor_msgs::msg::Imu::SharedPtr imu_data) {
+    // 四元数
+    tf2::Quaternion q(imu_data->orientation.x, imu_data->orientation.y,
+                      imu_data->orientation.z, imu_data->orientation.w);
+    // 將四元數轉換為旋轉矩陣
+    tf2::Matrix3x3 m(q);
+    // 转欧拉角
+    m.getRPY(pitch_temp, roll_temp, yaw_temp);
+
+    roll_temp = -roll_temp;
+    // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Roll: %f, Pitch: %f, Yaw:
+    // %f",roll, pitch, yaw);
+
+    /* if (fabs(pitch) < thres) {
+      //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "pitch: %f, Roll<%f",pitch,
+    thres); pitch = 0;
+
+    }
+    if (fabs(roll) < thres) {
+      //RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Roll: %f, Roll<%f",roll,
+    thres); roll = 0;
+
+    } */
+  }
+  void Service_callback(
+      const std::shared_ptr<interfaces::srv::CommandAdaption::Request> request,
+      std::shared_ptr<interfaces::srv::CommandAdaption::Response> response) {
+    int step = request->step;
+    roll = roll_temp;
+    pitch = pitch_temp;
+    fprintf(pitch_data, "%f\n", roll);
+    fprintf(roll_data, "%f\n", pitch);
+    // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),"roll=%f,pitch=%f\n",roll,
+    // pitch);
+
+    initialization();
+    // deep(step);
+    cal_out_3_sec(step);
+    // cal_out_3_walk(step);
+    /*
+    if (reduce_by_min_135){
+      reduce_by_min_if_nonzero(1);
+    }
+    if(reduce_by_min_246){
+      reduce_by_min_if_nonzero(2);
+    }
+     */
+
+    response->h1 = h[1];
+    response->h2 = h[2];
+    response->h3 = h[3];
+    response->h4 = h[4];
+    response->h5 = h[5];
+    response->h6 = h[6];
+    response->change = change;
+    fprintf(h1, "%f\n", h[1]);
+
+    // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "adapting{%d}", step);
+    /* RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
+                "h1: %f\th2: %f\th3: %f\th4:%f\th5:%f\th6:%f\nchange:%d\n ",
+                h[1], h[2], h[3], h[4], h[5], h[6], change); */
+    double ctrl_val;
+    int clad;
+    if (leg[1].osc[2].Y[step] >= 0 || leg[6].osc[2].Y[step] <= 0) {
+      if (leg[1].osc[2].Y[step] == 0) {
+        ctrl_val = abs(h[1]);
+        clad = leg[1].clad;
+      } else {
+        ctrl_val = abs(h[6]);
+        clad = leg[6].clad;
+      }
+    } else {
+      ctrl_val = 999;
+    }
+
+    RCLCPP_INFO(
+        rclcpp::get_logger("rclcpp"),
+        "pitch:%f\troll:%f\nchange:%d\nctrl_val:%f\tclad:%d\nisBalanced=%d\n",
+        pitch, roll, change, ctrl_val, clad, isBalanced);
+  }
+  void reduce_by_min_if_nonzero(int set) {
+    if (set == 1) {
+      min_abs_val = std::min({std::abs(h[1]), std::abs(h[3]), std::abs(h[5])});
+      if (min_abs_val != 0) {
+        if (std::abs(h[1]) == min_abs_val) {
+          if (h[1] >= 0) {
+            h[1] += h[1];
+            h[3] += h[1];
+            h[5] -= h[1];
+          } else {
+            h[1] -= h[1];
+            h[3] -= h[1];
+            h[5] += h[1];
+          }
+        }
+        if (std::abs(h[3]) == min_abs_val) {
+          if (h[3] >= 0) {
+            h[1] += h[3];
+            h[3] += h[3];
+            h[5] -= h[3];
+          } else {
+            h[1] -= h[3];
+            h[3] -= h[3];
+            h[5] += h[3];
+          }
+        }
+        if (std::abs(h[5]) == min_abs_val) {
+          if (h[5] >= 0) {
+            h[1] += h[5];
+            h[3] += h[5];
+            h[5] -= h[5];
+          } else {
+            h[1] -= h[5];
+            h[3] -= h[5];
+            h[5] += h[5];
+          }
+        }
+      }
+      h[1] = std::clamp(h[1], -0.6, 0.6);
+      h[3] = std::clamp(h[3], -0.6, 0.6);
+      h[5] = std::clamp(h[5], -0.6, 0.6);
+    }
+    if (set == 2) {
+      min_abs_val = std::min({std::abs(h[2]), std::abs(h[4]), std::abs(h[6])});
+      if (min_abs_val != 0) {
+        if (std::abs(h[2]) == min_abs_val) {
+          if (h[2] >= 0) {
+            h[2] += h[2];
+            h[4] -= h[2];
+            h[6] -= h[2];
+          } else {
+            h[2] -= h[2];
+            h[4] += h[2];
+            h[6] += h[2];
+          }
+        }
+        if (std::abs(h[4]) == min_abs_val) {
+          if (h[4] >= 0) {
+            h[2] += h[4];
+            h[4] -= h[4];
+            h[6] -= h[4];
+          } else {
+            h[2] -= h[4];
+            h[4] += h[4];
+            h[6] += h[4];
+          }
+        }
+        if (std::abs(h[6]) == min_abs_val) {
+          if (h[6] >= 0) {
+            h[2] += h[6];
+            h[4] -= h[6];
+            h[6] -= h[6];
+          } else {
+            h[2] -= h[6];
+            h[4] += h[6];
+            h[6] += h[6];
+          }
+        }
+      }
+      h[2] = std::clamp(h[2], -0.6, 0.6);
+      h[4] = std::clamp(h[4], -0.6, 0.6);
+      h[6] = std::clamp(h[6], -0.6, 0.6);
+    }
+  }
+  double ch_max(double a) {
+    if (a >= 0) {
+      return a;
+    }
+
+    else {
+      return 0;
+    }
+  }
+
+  void deep(int num_count) {
+    e[1] = (pitch + roll) * sqrt(0.5);
+    e[2] = roll;
+    e[3] = (-pitch + roll) * sqrt(0.5);
+    e[4] = (-pitch - roll) * sqrt(0.5);
+    e[5] = -roll;
+    e[6] = (pitch - roll) * sqrt(0.5);
+
+    isBalanced = 1;
+
+    for (int i = 1; i < 7; i++) {
+      leg[i].deep[num_count] = e[i];
+
+      if (i == 1) {
+        fprintf(deep1, "%f\n", leg[i].deep[num_count]);
+      }
+      if (e[i] > thres) {
+        isBalanced = 0;
+      }
+    }
+    // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
+    // "leg[%d].deep[%d]=%f\n",i,num_count,e[i]);
+  }
+  void initialization() {
+    for (int i = 1; i <= 6; i++) {
+      leg[i].lpara = kp[i];
+      leg[i].lpara2 = kd[i] / 0.2;
+    }
+  }
+
+  void cal_out_3_sec(int num_count) {
+    int count = num_count;
+
+    for (int i = 1; i <= 6; i++) {
+      int a = (i + 1) % 6;
+      if (a == 0) {
+        a = 6;
+      }
+      int aa = (i + 2) % 6;
+      if (aa == 0) {
+        aa = 6;
+      }
+      int aaa = (i + 3) % 6;
+      if (aaa == 0) {
+        aaa = 6;
+      }
+      int aaaa = (i + 4) % 6;
+      if (aaaa == 0) {
+        aaaa = 6;
+      }
+      int aaaaa = (i + 5) % 6;
+      if (aaaaa == 0) {
+        aaaaa = 6;
+      }
+
+      //----------------------------------------calculate
+      // feed--------------------------------
+      double feed = 0;
+      if (i == 1) {
+        isBalanced = 1;
+        feed = (pitch + roll) * 0.707;
+        // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "feed1=%f", feed);
+      } else if (i == 2) {
+        feed = roll;
+      }
+
+      else if (i == 3) {
+        feed = (-pitch + roll) * 0.707;
+      }
+
+      else if (i == 4) {
+        feed = (-pitch - roll) * 0.707;
+      }
+
+      else if (i == 5) {
+        feed = -roll;
+      }
+
+      else if (i == 6) {
+        feed = (pitch - roll) * 0.707;
+      }
+      /* if (feed>thres){
+        isBalanced=0;
+      } */
+      // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "feed[%d]=%f",i,feed);
+      if (abs(pitch) > thres || abs(roll) > thres) {
+        isBalanced = 0;
+      } else {
+        isBalanced = 1;
+      }
+      // feed = 0;
+      // printf("i = %d\tfeed = %lf\n",i,feed);
+      //----------------------------------------calculate
+      // feed--------------------------------
+      for (int j = 1; j <= 4; j++) {
+        if (j == 1 || j == 2 || j == 3) {
+          int k = (j + 1) % 3;
+          if (k == 0) {
+            k = 3;
+          }
+          int kk = (j + 2) % 3;
+          if (kk == 0) {
+            kk = 3;
+          }
+
+          //*********************** Extensor neuron *************************
+
+          leg[i].osc[j].dUe[count] =
+              (-leg[i].osc[j].Ue[count] + (Wfe * leg[i].osc[j].Yf[count]) -
+               (b * leg[i].osc[j].Ve[count]) + U0 +
+               (Wij * (ch_max(leg[i].osc[k].Ye[count]) +
+                       ch_max(leg[i].osc[kk].Ye[count]) +
+                       ch_max(leg[a].osc[j].Ye[count]) +
+                       ch_max(leg[aaaaa].osc[j].Ye[count])))) /
+              t1;
+
+          leg[i].osc[j].Ue[count + 1] =
+              leg[i].osc[j].Ue[count] + (step_long * leg[i].osc[j].dUe[count]);
+
+          leg[i].osc[j].Ye[count + 1] = max(0.00, leg[i].osc[j].Ue[count + 1]);
+
+          leg[i].osc[j].dVe[count] =
+              (-leg[i].osc[j].Ve[count] + leg[i].osc[j].Ye[count + 1]) / t2;
+
+          leg[i].osc[j].Ve[count + 1] =
+              leg[i].osc[j].Ve[count] + (step_long * leg[i].osc[j].dVe[count]);
+
+          leg[i].osc[j].dUf[count] =
+              (-leg[i].osc[j].Uf[count] + (Wfe * leg[i].osc[j].Ye[count]) -
+               (b * leg[i].osc[j].Vf[count]) + U0 +
+               (Wij * (ch_max(leg[i].osc[k].Yf[count]) +
+                       ch_max(leg[i].osc[kk].Yf[count]) +
+                       ch_max(leg[a].osc[j].Yf[count]) +
+                       ch_max(leg[aaaaa].osc[j].Yf[count])))) /
+              t1;
+
+          leg[i].osc[j].Uf[count + 1] =
+              leg[i].osc[j].Uf[count] + (step_long * leg[i].osc[j].dUf[count]);
+
+          leg[i].osc[j].Yf[count + 1] = max(0.00, leg[i].osc[j].Uf[count + 1]);
+
+          leg[i].osc[j].dVf[count] =
+              (-leg[i].osc[j].Vf[count] + leg[i].osc[j].Yf[count + 1]) / t2;
+
+          leg[i].osc[j].Vf[count + 1] =
+              leg[i].osc[j].Vf[count] + (step_long * leg[i].osc[j].dVf[count]);
+          //**********************************Flexor
+          // neuron********************************************
+
+          leg[i].osc[j].Y[count] =
+              leg[i].osc[j].Yf[count] - leg[i].osc[j].Ye[count];
+
+        }
+
+        else {
+          int k = 1;
+          int kk = 3;
+
+          //**********************************Extensor
+          // neuron******************************************
+          leg[i].osc[j].dUe[count] =
+              (feed - leg[i].osc[j].Ue[count] +
+               (Wfe * leg[i].osc[j].Yf[count]) - (b * leg[i].osc[j].Ve[count]) +
+               U0 +
+               (Wij * (ch_max(leg[i].osc[k].Ye[count]) +
+                       ch_max(leg[i].osc[kk].Ye[count]) +
+                       ch_max(leg[a].osc[j].Ye[count]) +
+                       ch_max(leg[aaaaa].osc[j].Ye[count])))) /
+              t1;
+          leg[i].osc[j].Ue[count + 1] =
+              leg[i].osc[j].Ue[count] + (step_long * leg[i].osc[j].dUe[count]);
+          leg[i].osc[j].Ye[count + 1] = max(0.00, leg[i].osc[j].Ue[count + 1]);
+
+          leg[i].osc[j].dVe[count] =
+              (-leg[i].osc[j].Ve[count] + leg[i].osc[j].Ye[count + 1]) / t2;
+          leg[i].osc[j].Ve[count + 1] =
+              leg[i].osc[j].Ve[count] + (step_long * leg[i].osc[j].dVe[count]);
+          //**********************************Extensor
+          // neuron******************************************
+
+          //**********************************Flexor
+          // neuron********************************************
+          leg[i].osc[j].dUf[count] =
+              (feed - leg[i].osc[j].Uf[count] +
+               (Wfe * leg[i].osc[j].Ye[count]) - (b * leg[i].osc[j].Vf[count]) +
+               U0 +
+               (Wij * (ch_max(leg[i].osc[k].Yf[count]) +
+                       ch_max(leg[i].osc[kk].Yf[count]) +
+                       ch_max(leg[a].osc[j].Yf[count]) +
+                       ch_max(leg[aaaaa].osc[j].Yf[count])))) /
+              t1;
+          leg[i].osc[j].Uf[count + 1] =
+              leg[i].osc[j].Uf[count] + (step_long * leg[i].osc[j].dUf[count]);
+          leg[i].osc[j].Yf[count + 1] = max(0.00, leg[i].osc[j].Uf[count + 1]);
+
+          leg[i].osc[j].dVf[count] =
+              (-leg[i].osc[j].Vf[count] + leg[i].osc[j].Yf[count + 1]) / t2;
+          leg[i].osc[j].Vf[count + 1] =
+              leg[i].osc[j].Vf[count] + (step_long * leg[i].osc[j].dVf[count]);
+          //**********************************Flexor
+          // neuron********************************************
+
+          leg[i].osc[j].Y[count] =
+              leg[i].osc[j].Yf[count] - leg[i].osc[j].Ye[count];
+          leg[i].deep[count] =
+              (leg[i].osc[4].Y[count] - leg[i].osc[2].Y[count]);
+        }
+
+        if (i == 1) {
+          if (j == 4) {
+            fprintf(deep1, "%f\n", leg[i].deep[count]);
+          }
+          if (j == 4) {
+            fprintf(Y14, "%f\n", leg[i].osc[j].Y[count]);
+          }
+          if (j == 2) {
+            fprintf(Y12, "%f\n", leg[i].osc[2].Y[count]);
+          }
+        }
+      }
+      // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),"deep[%d]=%f",i,leg[i].deep[count]);
+    }
+    if (count > 100) {
+      cal_out_3_walk(count);
+    }
+  }
+  void cal_out_3_walk(int num_count) {
+    if (leg[2].osc[3].Y[num_count] < 0) {
+      leg[2].osc[3].Y[num_count] = 0;
+    }
+    if (leg[5].osc[3].Y[num_count] < 0) {
+      leg[5].osc[3].Y[num_count] = 0;
+    }
+    for (int j = 1; j <= 6; ++j) {
+      leg[j].osc[2].Y[num_count] =
+          leg[j].osc[2].Y[num_count] * CPG_Scale_Factor;
+      /* if (leg[j].osc[2].Y[num_count] > 0.7) {
+        leg[j].osc[2].Y[num_count] = 0.7;
+      } */
+      if (leg[j].osc[2].Y[num_count] < 0) {
+        leg[j].osc[2].Y[num_count] = 0;
+      }
+      if (j <= 3) {
+        leg[j].osc[2].Y[num_count] = -leg[j].osc[2].Y[num_count];
+        leg[j].osc[3].Y[num_count] = -leg[j].osc[3].Y[num_count];
+      } else {
+        leg[j].osc[1].Y[num_count] = -leg[j].osc[1].Y[num_count];
+      }
+    }
+    leg[1].osc[3].Y[num_count] = -leg[1].osc[3].Y[num_count];
+    leg[6].osc[3].Y[num_count] = -leg[6].osc[3].Y[num_count];
+
+    /* for (int i = 1; i < 7; i++) {
+      printf("deep[%d]=%f\t",i,leg[i].deep[num_count]);
+    }
+    printf("\n"); */
+    reduce_by_min_135 = 0;
+    reduce_by_min_246 = 0;
+    change = 0;
+    for (int j = 1; j <= 6; j++) {
+      leg[j].height[num_count] = leg[j].height[num_count - 1];
+      // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),"leg[%d].height[%d]=%f",j,num_count,leg[j].height[num_count]);
+      number[j] = fabs(leg[j].height[num_count]);
+    }
+    for (int a = 1; a <= 5; a = a + 2) {
+      for (int b = a; b <= 5; b = b + 2) {
+        if (number[b] > number[a]) {
+          temp = number[b];
+          number[b] = number[a];
+          number[a] = temp;
+        }
+      }
+    }
+
+    for (int a = 2; a <= 6; a = a + 2) {
+      for (int b = a; b <= 6; b = b + 2) {
+        if (number[b] > number[a]) {
+          temp = number[b];
+          number[b] = number[a];
+          number[a] = temp;
+        }
+      }
+    }
+    /*for(int i=1; i<=6; i++){
+      printf("number[%d] = %lf\t", i, number[i]);
+    }*/
+    //-------------------------------------------------------
+    for (int i = 0; i < NUM_SERVOS; i = i + 3) {
+      ///*
+      if (i == 0 || i == 3 || i == 6) {
+        int j = 0;
+        if (i == 0) {
+          j = 1;
+        } else if (i == 3) {
+          j = 2;
+        } else {
+          j = 3;
+        }
+        //------------------------------------------------------------------------------------
+
+        // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
+        // "leg[%d].osc[2].Y[%d]=%f,173",j, num_count,
+        // leg[j].osc[2].Y[num_count]);
+        if (leg[j].osc[2].Y[num_count] < 0) {
+          // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "ww=%d", leg[j].ww);
+          if (leg[j].ww ==
+              1) {  // when switch in this condition(>0),use number of "no" to
+                    // judge if it's success in adjust or not
+
+            if (leg[j].no >= 10) {
+              // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "no=%d,adjust
+              // success",leg[j].no);
+              judge[j] = 1;  // adjust success
+              leg[j].no = 0;
+              leg[j].ww = 2;
+            } else {
+              // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "no=%d,adjust
+              // failed",leg[j].no);
+              judge[j] = 2;  // adjust failed
+              leg[j].ww = 2;
+              leg[j].no = 0;
+              leg[j].height[num_count - 1] = 0;  // reset the height
+            }
+          }
+
+          //--------inorder to make the robot smoothly
+          leg[j].height[num_count] = leg[j].height[num_count - 1];
+          kkk[j]++;  // kkk++ then kkk==1
+          if (kkk[j] !=
+              2) {  // consider when it adjust success(height > 0),we
+                    // dont want the leg go back to 0 then go to height
+            if (leg[j].osc[2].Y[num_count] >
+                leg[j].height[num_count]) {  // if the wave < height, then stop
+                                             // at height till wave > height
+              // printf("First-->height-upupupup=%lf\n",leg[1].height[num_count]);
+              h[j] = leg[j].height[num_count];
+              kkk[j] = 0;
+            } else {  // now is the moment that wave > height
+              h[j] = leg[j].osc[2].Y[num_count];
+              // printf("First-->out-upupupup=%lf\n",leg[1].osc[2].Y[num_count]);
+              kkk[j] = 1;
+            }
+          }
+          //--------inorder to make the robot smoothly
+          else {
+            if (leg[j].osc[2].Y[num_count] < leg[j].height[num_count]) {
+              h[j] = leg[j].osc[2].Y[num_count];
+              // printf("Second-->out-upupupup=%lf\n",leg[1].osc[2].Y[num_count]);
+            } else {  // when the wave go back lower, we dont want the leg
+                      // follow the wave while wave < height(stays at height)
+              h[j] = leg[j].height[num_count];
+              // printf("Second-->height-upupupup=%lf\n",leg[1].height[num_count]);
+            }
+            kkk[j] = 1;
+          }
+          leg[j].clad = 1;  // count of ladder
+
+        }
+        //------------------------------------------------------------------------------------
+        else if (leg[j].osc[2].Y[num_count] >= 0) {
+          leg[j].height[num_count] = leg[j].height[num_count - 1];
+
+          //*************************************condition
+          // 1*************************************
+          if (judge[j] == 1) {  // no need to adjust, use last time's height
+            // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),"no need to
+            // adjust\t231\n");
+            if (j == 1 || j == 3) {
+              if (number[5] >= 0) {
+                h[j] = leg[j].height[num_count] + number[5];
+                printf("out[%d]=%lf - NNNNNNNNNNNNNN\t", j,
+                       leg[j].height[num_count] + number[5]);
+              } else {
+                h[j] = leg[j].height[num_count] - number[5];
+                printf("out[%d]=%lf - NNNNNNNNNNNNNN\t", j,
+                       leg[j].height[num_count] - number[5]);
+              }
+            } else {
+              if (number[6] >= 0) {
+                h[j] = leg[j].height[num_count] + number[6];
+                printf("out[%d]=%lf - NNNNNNNNNNNNNN\t", j,
+                       leg[j].height[num_count] + number[6]);
+              } else {
+                h[j] = leg[j].height[num_count] - number[6];
+                printf("out[%d]=%lf - NNNNNNNNNNNNNN\t", j,
+                       leg[j].height[num_count] - number[6]);
+              }
+            }
+
+            ////wb_motor_set_position(R_servo[i+1], leg[j].height[num_count]);
+            // printf(">>out[%d] = %lf
+            // NONONONONONO\t",j,leg[j].height[num_count]);
+          }
+          //*************************************condition
+          // 1*************************************
+          //*************************************condition
+          // 2*************************************
+          else if (judge[j] == 2) {  // need to adjust again
+            // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "need to
+            // adjust\t263\n");
+            if (leg[j].deep[num_count] * leg[j].lpara +
+                    (leg[j].deep[num_count] - leg[j].deep[num_count - 1]) *
+                        leg[j].lpara2 <=
+                leg[j].out[num_count - 1]) {
+              leg[j].out[num_count] =
+                  leg[j].deep[num_count] * leg[j].lpara +
+                  (leg[j].deep[num_count] - leg[j].deep[num_count - 1]) *
+                      leg[j].lpara2;
+              /* RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "leg[%d].out[%d]=%f",
+                 j, num_count, leg[j].out[num_count]); */
+            } else {
+              leg[j].out[num_count] = leg[j].out[num_count - 1];
+            }
+
+            // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
+            // "leg[%d].out[%d]=%f",j,num_count,leg[j].out[num_count]);
+
+            // if(pitch==0 && roll==0){
+            if (isBalanced) {
+              leg[j].out[num_count - 1] = leg[j].ttemp;
+              leg[j].out[num_count] = leg[j].out[num_count - 1];
+
+            } /* else if (leg[j].out[num_count] <= -0.6) {
+              leg[j].out[num_count] = -0.6;
+            } */
+            leg[j].out[num_count] = std::clamp(
+                leg[j].out[num_count], -limit_knee_output, limit_knee_output);
+            // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
+            // "fin.leg[%d].out[%d]=%f",j,num_count,leg[j].out[num_count]);
+            leg[j].height[num_count] = leg[j].out[num_count];
+
+            /*
+            wb_motor_set_position(R_servo[i+1], leg[j].out[num_count]);
+            printf("out[%d]=%lf - yyyyyyyyyyyyyy\t", j,leg[j].out[num_count]);
+            */
+
+            //*
+            if (leg[j].clad == 1) {
+              if (fabs(leg[j].height[num_count]) > ladder[2]) {
+                h[j] = -ladder[2];
+                leg[j].ttemp = -ladder[2];
+                leg[j].clad = 2;
+                change = 1;
+                printf("1realout[%d]=%lf\t", j, -ladder[2]);
+              } else {
+                h[j] = leg[j].height[num_count];
+                leg[j].ttemp = leg[j].height[num_count];
+                leg[j].clad = 1;
+                change = 1;
+                printf("1realout[%d]=%lf\t", j, leg[j].height[num_count]);
+              }
+            }
+
+            else if (leg[j].clad == 2) {
+              if (fabs(leg[j].height[num_count]) > ladder[3]) {
+                h[j] = -ladder[3];
+                leg[j].ttemp = -ladder[3];
+                leg[j].clad = 3;
+                change = 1;
+                printf("2realout[%d]=%lf\t", j, -ladder[3]);
+              } else {
+                h[j] = leg[j].height[num_count];
+                leg[j].ttemp = leg[j].height[num_count];
+                leg[j].clad = 2;
+                change = 1;
+                printf("2realout[%d]=%lf\t", j, leg[j].height[num_count]);
+              }
+            }
+
+            else if (leg[j].clad == 3) {
+              if (fabs(leg[j].height[num_count]) > ladder[4]) {
+                h[j] = -ladder[4];
+                leg[j].ttemp = -ladder[4];
+                leg[j].clad = 4;
+                change = 1;
+                printf("3realout[%d]=%lf\t", j, -ladder[4]);
+              } else {
+                h[j] = leg[j].height[num_count];
+                leg[j].ttemp = leg[j].height[num_count];
+                leg[j].clad = 3;
+                change = 1;
+                printf("3realout[%d]=%lf\t", j, leg[j].height[num_count]);
+              }
+            }
+
+            else if (leg[j].clad == 4) {
+              if (fabs(leg[j].height[num_count]) > ladder[5]) {
+                h[j] = -ladder[5];
+                leg[j].ttemp = -ladder[5];
+                leg[j].clad = 5;
+                change = 1;
+                printf("4realout[%d]=%lf\t", j, -ladder[5]);
+              } else {
+                h[j] = leg[j].height[num_count];
+                leg[j].ttemp = leg[j].height[num_count];
+                leg[j].clad = 4;
+                change = 1;
+                printf("4realout[%d]=%lf\t", j, leg[j].height[num_count]);
+              }
+            }
+
+            else if (leg[j].clad == 5) {
+              if (fabs(leg[j].height[num_count]) > ladder[6]) {
+                h[j] = -ladder[6];
+                leg[j].ttemp = -ladder[6];
+                leg[j].clad = 6;
+                change = 1;
+                printf("5realout[%d]=%lf\t", j, -ladder[6]);
+              } else {
+                h[j] = leg[j].height[num_count];
+                leg[j].ttemp = leg[j].height[num_count];
+                leg[j].clad = 5;
+                change = 1;
+                printf("5realout[%d]=%lf\t", j, leg[j].height[num_count]);
+              }
+            }
+
+            else if (leg[j].clad == 6) {
+              if (fabs(leg[j].height[num_count]) > ladder[7]) {
+                h[j] = -ladder[7];
+                leg[j].ttemp = -ladder[7];
+                leg[j].clad = 7;
+                change = 1;
+                printf("6realout[%d]=%lf\t", j, -ladder[7]);
+              } else {
+                h[j] = leg[j].height[num_count];
+                leg[j].ttemp = leg[j].height[num_count];
+                leg[j].clad = 6;
+                change = 1;
+                printf("6realout[%d]=%lf\t", j, leg[j].height[num_count]);
+              }
+            }
+
+            else if (leg[j].clad == 7) {
+              if (fabs(leg[j].height[num_count]) > ladder[8]) {
+                h[j] = -ladder[8];
+                leg[j].ttemp = -ladder[8];
+                leg[j].clad = 8;
+                change = 1;
+                printf("7realout[%d]=%lf\t", j, -ladder[8]);
+              } else {
+                h[j] = leg[j].height[num_count];
+                leg[j].ttemp = leg[j].height[num_count];
+                leg[j].clad = 7;
+                change = 1;
+                printf("7realout[%d]=%lf\t", j, leg[j].height[num_count]);
+              }
+            }
+
+            else if (leg[j].clad == 8) {
+              if (fabs(leg[j].height[num_count]) > ladder[9]) {
+                h[j] = -ladder[9];
+                leg[j].ttemp = -ladder[9];
+                leg[j].clad = 9;
+                change = 1;
+                printf("8realout[%d]=%lf\t", j, -ladder[9]);
+              } else {
+                h[j] = leg[j].height[num_count];
+                leg[j].ttemp = leg[j].height[num_count];
+                leg[j].clad = 8;
+                change = 1;
+                printf("8realout[%d]=%lf\t", j, leg[j].height[num_count]);
+              }
+            }
+
+            else if (leg[j].clad == 9) {
+              if (fabs(leg[j].height[num_count]) > ladder[10]) {
+                h[j] = -ladder[10];
+                leg[j].ttemp = -ladder[10];
+                leg[j].clad = 10;
+                change = 1;
+                printf("9realout[%d]=%lf\t", j, -ladder[10]);
+              } else {
+                h[j] = leg[j].height[num_count];
+                leg[j].ttemp = leg[j].height[num_count];
+                leg[j].clad = 9;
+                change = 1;
+                printf("9realout[%d]=%lf\t", j, leg[j].height[num_count]);
+              }
+            }
+
+            else if (leg[j].clad == 10) {
+              if (fabs(leg[j].height[num_count]) > ladder[11]) {
+                h[j] = -ladder[11];
+                leg[j].ttemp = -ladder[11];
+                leg[j].clad = 10;  // 保持在最高級別
+                change = 1;
+                printf("10realout[%d]=%lf\t", j, -ladder[11]);
+              } else {
+                h[j] = leg[j].height[num_count];
+                leg[j].ttemp = leg[j].height[num_count];
+                leg[j].clad = 10;
+                change = 1;
+                printf("10realout[%d]=%lf\t", j, leg[j].height[num_count]);
+              }
+            }
+            if (j == 1 or j == 3) {
+              reduce_by_min_135 = 1;
+            } else {
+              reduce_by_min_246 = 1;
+            }
+            //*/
+            kkk[j] = 0;
+          }
+          //*************************************condition
+          // 2*************************************
+          //-------------------------------------
+          pi[j] = pitch;
+          ro[j] = roll;
+          // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
+          // "pitch=%f,roll=%f,373",pitch, roll);
+          if (isBalanced) {  // no need to adjust
+            // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "no++");
+            leg[j].no++;
+          }
+          // printf("judge[0]=%d\n",judge[0]);
+          //-------------------------------------
+          leg[j].ww = 1;
+          kkk[j] = 0;
+        }
+        //------------------------------------------------------------------------------------
+        // wb_motor_set_position(R_servo[i+2], -leg[j].osc[3].Y[num_count]);
+      }
+      //*/
+      ///*
+      if (i == 9 || i == 12 || i == 15) {
+        int j = 0;
+        if (i == 9) {
+          j = 6;
+        } else if (i == 12) {
+          j = 5;
+        } else {
+          j = 4;
+        }
+
+        //------------------------------------------------------------------------------------
+        // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
+        // "leg[%d].osc[2].Y[%d]=%f,400",j, num_count,
+        // leg[j].osc[2].Y[num_count]);
+        if (leg[j].osc[2].Y[num_count] > 0) {
+          // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "ww=%d", leg[j].ww);
+          if (leg[j].ww == 1) {
+            if (leg[j].no >= 10) {
+              // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "no=%d,adjust
+              // success",leg[j].no);
+              judge[j] = 1;
+              leg[j].no = 0;
+              leg[j].ww = 2;
+            } else {
+              // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "no=%d,adjust
+              // failed",leg[j].no);
+              judge[j] = 2;
+              leg[j].ww = 2;
+              leg[j].no = 0;
+              leg[j].height[num_count - 1] = 0;
+            }
+          }
+
+          leg[j].height[num_count] = leg[j].height[num_count - 1];
+          kkk[j]++;
+          if (kkk[j] != 2) {
+            if (leg[j].osc[2].Y[num_count] < leg[j].height[num_count]) {
+              // printf("First-->height-upupupup=%lf\n",leg[1].height[num_count]);
+              h[j] = leg[j].height[num_count];
+              kkk[j] = 0;
+              // printf("out[%d] = %lf\t",j,leg[j].height[num_count]);
+            } else {
+              h[j] = leg[j].osc[2].Y[num_count];
+              // printf("First-->out-upupupup=%lf\n",leg[1].osc[2].Y[num_count]);
+              kkk[j] = 1;
+              // printf("out[%d] = %lf\t",j,leg[j].osc[2].Y[num_count]);
+            }
+
+          }
+          //--------inorder to make the robot smoothly
+
+          else {
+            // printf("height!!!!!!!!=%lf\n",leg[1].height[num_count]);
+
+            if (leg[j].osc[2].Y[num_count] > leg[j].height[num_count]) {
+              h[j] = leg[j].osc[2].Y[num_count];
+              // printf("out[%d] = %lf\t",j,leg[j].osc[2].Y[num_count]);
+              // printf("Second-->out-upupupup=%lf\n",leg[1].osc[2].Y[num_count]);
+            } else {
+              h[j] = leg[j].height[num_count];
+              // printf("out[%d] = %lf\t",j,leg[j].height[num_count]);
+              // printf("Second-->height-upupupup=%lf\n",leg[1].height[num_count]);
+            }
+
+            kkk[j] = 1;
+          }
+          leg[j].clad = 1;
+        }
+        //------------------------------------------------------------------------------------
+        else if (leg[j].osc[2].Y[num_count] <= 0) {
+          leg[j].height[num_count] = leg[j].height[num_count - 1];
+
+          //*************************************condition
+          // 1*************************************
+          if (judge[j] == 1) {  // no need to adjust
+            // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),"no need to
+            // adjust\t452\n");
+            ///*
+            if (j == 5) {
+              if (number[5] >= 0) {
+                h[j] = leg[j].height[num_count] - number[5];
+                printf("out[%d]=%lf - NNNNNNNNNNNNNN\t", j,
+                       leg[j].height[num_count] - number[5]);
+              } else {
+                h[j] = leg[j].height[num_count] + number[5];
+                printf("out[%d]=%lf - NNNNNNNNNNNNNN\t", j,
+                       leg[j].height[num_count] + number[5]);
+              }
+            } else {
+              if (number[6] >= 0) {
+                h[j] = leg[j].height[num_count] - number[6];
+                printf("out[%d]=%lf - NNNNNNNNNNNNNN\t", j,
+                       leg[j].height[num_count] - number[6]);
+              } else {
+                h[j] = leg[j].height[num_count] + number[6];
+                printf("out[%d]=%lf - NNNNNNNNNNNNNN\t", j,
+                       leg[j].height[num_count] + number[6]);
+              }
+            }
+
+            //*/
+            ////wb_motor_set_position(R_servo[i+1], leg[j].height[num_count]);
+            // printf(">>out[%d] = %lf
+            // NONONONONONO\t",j,leg[j].height[num_count]);
+          }
+          //*************************************condition
+          // 1*************************************
+
+          //*************************************condition
+          // 2*************************************
+          else if (judge[j] == 2) {  // start to adjust
+            // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "need to
+            // adjust\t487\n");
+            if (leg[j].deep[num_count] * leg[j].lpara +
+                    (leg[j].deep[num_count] - leg[j].deep[num_count - 1]) *
+                        leg[j].lpara2 >=
+                leg[j].out[num_count - 1]) {  // compare with last time's out
+              leg[j].out[num_count] =
+                  leg[j].deep[num_count] * leg[j].lpara +
+                  (leg[j].deep[num_count] - leg[j].deep[num_count - 1]) *
+                      leg[j].lpara2;
+              // printf("\ncccccccccccccccccc\nleg[j].out[num_count]=%f\n",leg[j].out[num_count]);
+              /* RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "leg[%d].out[%d]=%f",
+                 j, num_count, leg[j].out[num_count]); */
+            } else {
+              leg[j].out[num_count] = leg[j].out[num_count - 1];
+            }
+            // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
+            // "leg[%d].out[%d]=%f",j,num_count,leg[j].out[num_count]);
+            //  if(pitch==0 && roll==0){
+            if (isBalanced) {
+              leg[j].out[num_count - 1] = leg[j].ttemp;
+              leg[j].out[num_count] = leg[j].out[num_count - 1];
+            } /* else if (leg[j].out[num_count] >= 0.6) {
+              leg[j].out[num_count] = 0.6;
+            } */
+            leg[j].out[num_count] = std::clamp(
+                leg[j].out[num_count], -limit_knee_output, limit_knee_output);
+            // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
+            // "fin,leg[%d].out[%d]=%f",j,num_count,leg[j].out[num_count]);
+
+            leg[j].height[num_count] = leg[j].out[num_count];
+
+            /*
+            wb_motor_set_position(R_servo[i+1], leg[j].out[num_count]);
+            printf("out[%d]=%lf - yyyyyyyyyyyyyy\t", j,leg[j].out[num_count]);
+            */
+
+            //*
+            if (leg[j].clad == 1) {
+              if ((leg[j].height[num_count]) > ladder[2]) {
+                h[j] = ladder[2];
+                leg[j].ttemp = ladder[2];
+                leg[j].clad = 2;
+                change = 1;
+                printf("1realout[%d]=%lf\t", j, ladder[2]);
+              } else {
+                h[j] = leg[j].height[num_count];
+                leg[j].ttemp = leg[j].height[num_count];
+                leg[j].clad = 1;
+                change = 1;
+                printf("1realout[%d]=%lf\t", j, leg[j].height[num_count]);
+              }
+            }
+
+            else if (leg[j].clad == 2) {
+              if ((leg[j].height[num_count]) > ladder[3]) {
+                h[j] = ladder[3];
+                leg[j].ttemp = ladder[3];
+                leg[j].clad = 3;
+                change = 1;
+                printf("2realout[%d]=%lf\t", j, ladder[3]);
+              } else {
+                h[j] = leg[j].height[num_count];
+                leg[j].ttemp = leg[j].height[num_count];
+                leg[j].clad = 2;
+                change = 1;
+                printf("2realout[%d]=%lf\t", j, leg[j].height[num_count]);
+              }
+            }
+
+            else if (leg[j].clad == 3) {
+              if ((leg[j].height[num_count]) > ladder[4]) {
+                h[j] = ladder[4];
+                leg[j].ttemp = ladder[4];
+                leg[j].clad = 4;
+                change = 1;
+                printf("3realout[%d]=%lf\t", j, ladder[4]);
+              } else {
+                h[j] = leg[j].height[num_count];
+                leg[j].ttemp = leg[j].height[num_count];
+                leg[j].clad = 3;
+                change = 1;
+                printf("3realout[%d]=%lf\t", j, leg[j].height[num_count]);
+              }
+            }
+
+            else if (leg[j].clad == 4) {
+              if ((leg[j].height[num_count]) > ladder[5]) {
+                h[j] = ladder[5];
+                leg[j].ttemp = ladder[5];
+                leg[j].clad = 5;
+                change = 1;
+                printf("4realout[%d]=%lf\t", j, ladder[5]);
+              } else {
+                h[j] = leg[j].height[num_count];
+                leg[j].ttemp = leg[j].height[num_count];
+                leg[j].clad = 4;
+                change = 1;
+                printf("4realout[%d]=%lf\t", j, leg[j].height[num_count]);
+              }
+            }
+
+            else if (leg[j].clad == 5) {
+              if ((leg[j].height[num_count]) > ladder[6]) {
+                h[j] = ladder[6];
+                leg[j].ttemp = ladder[6];
+                leg[j].clad = 6;
+                change = 1;
+                printf("5realout[%d]=%lf\t", j, ladder[6]);
+              } else {
+                h[j] = leg[j].height[num_count];
+                leg[j].ttemp = leg[j].height[num_count];
+                leg[j].clad = 5;
+                change = 1;
+                printf("5realout[%d]=%lf\t", j, leg[j].height[num_count]);
+              }
+            }
+
+            else if (leg[j].clad == 6) {
+              if ((leg[j].height[num_count]) > ladder[7]) {
+                h[j] = ladder[7];
+                leg[j].ttemp = ladder[7];
+                leg[j].clad = 7;
+                change = 1;
+                printf("6realout[%d]=%lf\t", j, ladder[7]);
+              } else {
+                h[j] = leg[j].height[num_count];
+                leg[j].ttemp = leg[j].height[num_count];
+                leg[j].clad = 6;
+                change = 1;
+                printf("6realout[%d]=%lf\t", j, leg[j].height[num_count]);
+              }
+            }
+
+            else if (leg[j].clad == 7) {
+              if ((leg[j].height[num_count]) > ladder[8]) {
+                h[j] = ladder[8];
+                leg[j].ttemp = ladder[8];
+                leg[j].clad = 8;
+                change = 1;
+                printf("7realout[%d]=%lf\t", j, ladder[8]);
+              } else {
+                h[j] = leg[j].height[num_count];
+                leg[j].ttemp = leg[j].height[num_count];
+                leg[j].clad = 7;
+                change = 1;
+                printf("7realout[%d]=%lf\t", j, leg[j].height[num_count]);
+              }
+            }
+
+            else if (leg[j].clad == 8) {
+              if ((leg[j].height[num_count]) > ladder[9]) {
+                h[j] = ladder[9];
+                leg[j].ttemp = ladder[9];
+                leg[j].clad = 9;
+                change = 1;
+                printf("8realout[%d]=%lf\t", j, ladder[9]);
+              } else {
+                h[j] = leg[j].height[num_count];
+                leg[j].ttemp = leg[j].height[num_count];
+                leg[j].clad = 8;
+                change = 1;
+                printf("8realout[%d]=%lf\t", j, leg[j].height[num_count]);
+              }
+            }
+
+            else if (leg[j].clad == 9) {
+              if ((leg[j].height[num_count]) > ladder[10]) {
+                h[j] = ladder[10];
+                leg[j].ttemp = ladder[10];
+                leg[j].clad = 10;
+                change = 1;
+                printf("9realout[%d]=%lf\t", j, ladder[10]);
+              } else {
+                h[j] = leg[j].height[num_count];
+                leg[j].ttemp = leg[j].height[num_count];
+                leg[j].clad = 9;
+                change = 1;
+                printf("9realout[%d]=%lf\t", j, leg[j].height[num_count]);
+              }
+            }
+
+            else if (leg[j].clad == 10) {
+              if ((leg[j].height[num_count]) > ladder[11]) {
+                h[j] = ladder[11];
+                leg[j].ttemp = ladder[11];
+                leg[j].clad = 10;  // 保持在最高級別
+                change = 1;
+                printf("10realout[%d]=%lf\t", j, ladder[11]);
+              } else {
+                h[j] = leg[j].height[num_count];
+                leg[j].ttemp = leg[j].height[num_count];
+                leg[j].clad = 10;
+                change = 1;
+                printf("10realout[%d]=%lf\t", j, leg[j].height[num_count]);
+              }
+            }
+            if (j == 5) {
+              reduce_by_min_135 = 1;
+            } else {
+              reduce_by_min_246 = 1;
+            }
+            //*/
+            kkk[j] = 0;
+          }
+          //*************************************condition
+          // 2*************************************
+          //-------------------------------------
+          pi[j] = pitch;
+          ro[j] = roll;
+          // RCLCPP_INFO(rclcpp::get_logger("rclcpp"),
+          // "pitch=%f,roll=%f,602",pitch, roll);
+
+          if (isBalanced) {  // no need to adjust
+            leg[j].no++;
+          }
+          // printf("judge[0]=%d\n",judge[0]);
+          //-------------------------------------
+          leg[j].ww = 1;
+          kkk[j] = 0;
+        }
+        // printf("leg[j].deep[%d] = %lf\tdeep[%d]*kp = %lf\tdelta->deep[%d]*kd
+        // = %lf\tleg[j].out[%d] =
+        // %lf\n",num_count,leg[j].deep[num_count],num_count,leg[j].deep[num_count]*leg[j].lpara,num_count,leg[j].deep[num_count]-leg[j].deep[num_count-1]*leg[j].lpara2,num_count,leg[j].out[num_count]);
+        //------------------------------------------------------------------------------------
+        // wb_motor_set_position(R_servo[i+2], -leg[j].osc[3].Y[num_count]);
+      }
+      //*/
+    }
+  }
+
+ private:
+  rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_;
+  rclcpp::Service<interfaces::srv::CommandAdaption>::SharedPtr service_;
+};
+
+int main(int argc, char** argv) {
+  init_cpg();
+  // load_cpg();
+  open_log_files();
+  rclcpp::init(argc, argv);
+  adaption_node adap;
+  auto node = std::make_shared<adaption_node>();
+
+  rclcpp::spin(node);
+  rclcpp::shutdown();
+  close_log_files();
+
+  return 0;
+}
+
+const char* base_path = "/home/user/ros2_obf_ws/src/cpg";
+// fixed_cpg
+// knee_high_3
+const char* folder_name = "knee_high_3";  // <-- 修改這裡即可切換資料夾
+char full_path_buf[256];                  // 共用緩衝區
+
+#define MAKE_PATH(filename)                                              \
+  (snprintf(full_path_buf, sizeof(full_path_buf), "%s/%s/%s", base_path, \
+            folder_name, filename),                                      \
+   full_path_buf)
+
+void load_cpg(void) {
+  FILE* YYout11 = fopen(MAKE_PATH("YYout11.txt"), "r");
+  FILE* YYout21 = fopen(MAKE_PATH("YYout21.txt"), "r");
+  FILE* YYout31 = fopen(MAKE_PATH("YYout31.txt"), "r");
+  FILE* YYout41 = fopen(MAKE_PATH("YYout41.txt"), "r");
+  FILE* YYout51 = fopen(MAKE_PATH("YYout51.txt"), "r");
+  FILE* YYout61 = fopen(MAKE_PATH("YYout61.txt"), "r");
+
+  FILE* YYout12 = fopen(MAKE_PATH("YYout12.txt"), "r");
+  FILE* YYout22 = fopen(MAKE_PATH("YYout22.txt"), "r");
+  FILE* YYout32 = fopen(MAKE_PATH("YYout32.txt"), "r");
+  FILE* YYout42 = fopen(MAKE_PATH("YYout42.txt"), "r");
+  FILE* YYout52 = fopen(MAKE_PATH("YYout52.txt"), "r");
+  FILE* YYout62 = fopen(MAKE_PATH("YYout62.txt"), "r");
+
+  FILE* YYout13 = fopen(MAKE_PATH("YYout13.txt"), "r");
+  FILE* YYout23 = fopen(MAKE_PATH("YYout23.txt"), "r");
+  FILE* YYout33 = fopen(MAKE_PATH("YYout33.txt"), "r");
+  FILE* YYout43 = fopen(MAKE_PATH("YYout43.txt"), "r");
+  FILE* YYout53 = fopen(MAKE_PATH("YYout53.txt"), "r");
+  FILE* YYout63 = fopen(MAKE_PATH("YYout63.txt"), "r");
+
+  for (int count = 1; count <= _Maxstep; count++) {
+    fscanf(YYout11, "%lf\n", &(leg[1].osc[1].Y[count]));
+    fscanf(YYout12, "%lf\n", &(leg[1].osc[2].Y[count]));
+    fscanf(YYout13, "%lf\n", &(leg[1].osc[3].Y[count]));
+
+    fscanf(YYout21, "%lf\n", &(leg[2].osc[1].Y[count]));
+    fscanf(YYout22, "%lf\n", &(leg[2].osc[2].Y[count]));
+    fscanf(YYout23, "%lf\n", &(leg[2].osc[3].Y[count]));
+
+    fscanf(YYout31, "%lf\n", &(leg[3].osc[1].Y[count]));
+    fscanf(YYout32, "%lf\n", &(leg[3].osc[2].Y[count]));
+    fscanf(YYout33, "%lf\n", &(leg[3].osc[3].Y[count]));
+
+    fscanf(YYout41, "%lf\n", &(leg[4].osc[1].Y[count]));
+    fscanf(YYout42, "%lf\n", &(leg[4].osc[2].Y[count]));
+    fscanf(YYout43, "%lf\n", &(leg[4].osc[3].Y[count]));
+
+    fscanf(YYout51, "%lf\n", &(leg[5].osc[1].Y[count]));
+    fscanf(YYout52, "%lf\n", &(leg[5].osc[2].Y[count]));
+    fscanf(YYout53, "%lf\n", &(leg[5].osc[3].Y[count]));
+
+    fscanf(YYout61, "%lf\n", &(leg[6].osc[1].Y[count]));
+    fscanf(YYout62, "%lf\n", &(leg[6].osc[2].Y[count]));
+    fscanf(YYout63, "%lf\n", &(leg[6].osc[3].Y[count]));
+  }
+
+  fclose(YYout11);
+  fclose(YYout21);
+  fclose(YYout31);
+  fclose(YYout41);
+  fclose(YYout51);
+  fclose(YYout61);
+
+  fclose(YYout12);
+  fclose(YYout22);
+  fclose(YYout32);
+  fclose(YYout42);
+  fclose(YYout52);
+  fclose(YYout62);
+
+  fclose(YYout13);
+  fclose(YYout23);
+  fclose(YYout33);
+  fclose(YYout43);
+  fclose(YYout53);
+  fclose(YYout63);
+
+  // turn(_Maxstep);
+}
+void init_cpg() {
+  RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "init_cpg");
+  for (int i = 1; i <= 6; i++) {
+    for (int j = 1; j <= 4; j++) {
+      for (int k = 0; k <= _Maxstep; k++) {
+        leg[i].osc[j].dUe[k] = 0;
+        leg[i].osc[j].Ue[k] = 0;
+        leg[i].osc[j].dUf[k] = 0;
+        leg[i].osc[j].Uf[k] = 0;
+        leg[i].osc[j].dVe[k] = 0;
+        leg[i].osc[j].Ve[k] = 0;
+        leg[i].osc[j].dVf[k] = 0;
+        leg[i].osc[j].Vf[k] = 0;
+        leg[i].osc[j].Ye[k] = 0;
+        leg[i].osc[j].Yf[k] = 0, leg[i].osc[j].Y[k] = 0;
+      }
+    }
+  }
+
+  srand(time(NULL));
+  double abc = 0.1;
+  // 給初值，一定要給，每個震盪器初始值都要不同，且同個帳盪器Uf和Vf不能一樣，同隻腳的也不能一樣
+  // 原本是用隨機的，這裡因為要使輸出訊號固定，所以改成直接指定
+  double Uf_values[24] = {0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08,
+                          0.09, 0.10, 0.11, 0.12, 0.13, 0.14, 0.15, 0.16,
+                          0.17, 0.18, 0.19, 0.20, 0.21, 0.22, 0.23, 0.24};
+
+  double Vf_values[24] = {0.025, 0.035, 0.045, 0.055, 0.065, 0.075,
+                          0.085, 0.095, 0.105, 0.115, 0.125, 0.135,
+                          0.145, 0.155, 0.165, 0.175, 0.185, 0.195,
+                          0.205, 0.215, 0.225, 0.235, 0.245, 0.255};
+
+  int index = 0;
+
+  for (int i = 1; i <= 6; i++) {
+    for (int j = 1; j <= 4; j++) {
+      leg[i].osc[j].Ue[1] = 0;
+      leg[i].osc[j].Ve[1] = 0;
+
+      leg[i].osc[j].Uf[1] = Uf_values[index];
+      leg[i].osc[j].Vf[1] = Vf_values[index];
+      index++;
+    }
+  }
+}
+
+void turn(int num_count) {
+  for (int i = 0; i <= num_count; ++i) {
+    if (leg[2].osc[3].Y[i] < 0) {
+      leg[2].osc[3].Y[i] = 0;
+    }
+    if (leg[5].osc[3].Y[i] < 0) {
+      leg[5].osc[3].Y[i] = 0;
+    }
+    for (int j = 1; j <= 6; ++j) {
+      if (leg[j].osc[2].Y[i] < 0) {
+        leg[j].osc[2].Y[i] = 0;
+      }
+      if (j <= 3) {
+        leg[j].osc[2].Y[i] = -leg[j].osc[2].Y[i];
+        leg[j].osc[3].Y[i] = -leg[j].osc[3].Y[i];
+      } else {
+        leg[j].osc[1].Y[i] = -leg[j].osc[1].Y[i];
+      }
+    }
+    leg[1].osc[3].Y[i] = -leg[1].osc[3].Y[i];
+    leg[6].osc[3].Y[i] = -leg[6].osc[3].Y[i];
+  }
+}
+
+void open_log_files() {
+  pitch_data =
+      fopen("/home/user/ros2_obf_ws/src/sensor_data/pitch_data.txt", "a");
+  if (!pitch_data) {
+    perror("Failed to open log files:pitch_data.txt");
+  }
+
+  roll_data =
+      fopen("/home/user/ros2_obf_ws/src/sensor_data/roll_data.txt", "a");
+  if (!pitch_data) {
+    perror("Failed to open log files:roll_data.txt");
+  }
+
+  deep1 = fopen("/home/user/ros2_obf_ws/src/sensor_data/deep1.txt", "a");
+  if (!deep1) {
+    perror("Failed to open log files:deep1.txt");
+  }
+
+  h1 = fopen("/home/user/ros2_obf_ws/src/sensor_data/h1.txt", "a");
+  if (!h1) {
+    perror("Failed to open log files:h1.txt");
+  }
+  Y14 = fopen("/home/user/ros2_obf_ws/src/sensor_data/Y14.txt", "a");
+  if (!Y14) {
+    perror("Failed to open log files:Y14.txt");
+  }
+  Y12 = fopen("/home/user/ros2_obf_ws/src/sensor_data/Y12.txt", "a");
+  if (!Y12) {
+    perror("Failed to open log files:Y12.txt");
+  }
+}
+
+void close_log_files() {
+  if (pitch_data) fclose(pitch_data);
+  if (roll_data) fclose(roll_data);
+  if (deep1) fclose(deep1);
+  if (h1) fclose(h1);
+  if (Y12) fclose(Y12);
+  if (Y14) fclose(Y14);
+}
