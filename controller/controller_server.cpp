@@ -36,12 +36,12 @@ int adaption_mode_in_clu;
 #define max_speed 50.0
 //////////////////////////////  define區
 ////////////////////////////////////////////
-#define normal_mode_clu "/home/user/ros2_obf_ws/src/controller_server/rule_w_new_wall.txt"
-#define adaption_mode_clu "/home/user/ros2_obf_ws/src/controller_server/newankle_rule_w.txt"// 紀錄rule數量的文件
+#define normal_mode_clu "/home/user/ros2_obf_ws/src/controller_server/fuzzy_rule/rule_s_new_wall.txt"
+#define adaption_mode_clu "/home/user/ros2_obf_ws/src/controller_server/fuzzy_rule/newankle_rule_s.txt"// 紀錄rule數量的文件
 //#define load_data_clu "/home/user/ros2_obf_ws/src/controller_server/new_close_rule_w.txt"
 
-#define normal_mode_FC "/home/user/ros2_obf_ws/src/controller_server/w_new_wall.txt"
-#define adaption_mode_FC "/home/user/ros2_obf_ws/src/controller_server/newankle_w.txt"// 紀錄FC參數的文件
+#define normal_mode_FC "/home/user/ros2_obf_ws/src/controller_server/fuzzy_rule/w_new_wall.txt"
+#define adaption_mode_FC "/home/user/ros2_obf_ws/src/controller_server/fuzzy_rule/newankle_s.txt"// 紀錄FC參數的文件
 //#define load_data_FC  "/home/user/ros2_obf_ws/src/controller_server/new_close_w.txt"
 
 // #define save_ave_vel "controller/nsga_v1/save_ave_speed.txt"
@@ -318,8 +318,8 @@ class controller : public rclcpp::Node {
     too_close_left = 0;
     too_close_right = 0;
     // 目前都用左沿牆
-    decision_left = 1;
-    decision_right = 0;
+    decision_left = 0;
+    decision_right = 1;
 
     if (decision_left == 1) {
       std::cout << "LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL"

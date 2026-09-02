@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(controller_server)
+project(adaption)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -7,24 +7,25 @@ endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
-find_package(rclcpp REQUIRED)
-find_package(std_msgs REQUIRED)
-find_package(sensor_msgs REQUIRED)
 find_package(interfaces REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(tf2 REQUIRED)
 
-add_executable(controller_server src/controller_server.cpp)
-target_include_directories(controller_server PUBLIC
+add_executable(adaption src/adaption.cpp)
+target_include_directories(adaption PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
-target_compile_features(controller_server PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
+target_compile_features(adaption PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
 ament_target_dependencies(
-  controller_server
-  "rclcpp"
+  adaption
   "interfaces"
+  "rclcpp"
   sensor_msgs
+  tf2
 )
 
-install(TARGETS controller_server
+install(TARGETS adaption
   DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)
